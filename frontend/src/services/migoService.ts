@@ -32,7 +32,7 @@ export interface MigoDniResponse {
 export const migoService = {
   // Obtiene el token desde variables de entorno con fallback
   getToken: (): string => {
-    return import.meta.env.VITE_MIGO_TOKEN?.trim() || '759ebb1b-6c5c-402b-8211-fad6e99644a5';
+    return import.meta.env.VITE_MIGO_TOKEN?.trim() || 'a451fa30-662c-4de1-969c-58a52149d593';
   },
 
   // Consulta RUC en SUNAT vía Migo API
