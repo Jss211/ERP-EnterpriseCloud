@@ -29,7 +29,7 @@ export interface Proveedor extends ProveedorFormData {
 
 export const proveedoresService = {
   // Obtener proveedores directamente desde Supabase
-  getProveedores: async (): Promise<Proveedor[]> => {
+  getProveedores: async (strict = false): Promise<Proveedor[]> => {
     try {
       const { data, error } = await supabase
         .from('proveedores')
@@ -56,6 +56,7 @@ export const proveedoresService = {
 
       if (error) {
         console.error('Error al obtener proveedores de Supabase:', error.message);
+        if (strict) throw new Error('No se pudieron cargar los proveedores. Intenta nuevamente.');
         return [];
       }
 
@@ -75,6 +76,7 @@ export const proveedoresService = {
       }));
     } catch (err) {
       console.error('Error inesperado en getProveedores:', err);
+      if (strict) throw new Error('No se pudieron cargar los proveedores. Intenta nuevamente.');
       return [];
     }
   },

@@ -1,3 +1,4 @@
+import { customerRepository, supplierRepository } from '../repositories/masterRepositories';
 import React, { useState } from 'react';
 import { Building2, LoaderCircle, Search, User, X } from 'lucide-react';
 import { clientesService, type Cliente } from '../services/clientesService';
@@ -7,6 +8,7 @@ type PartyKind = 'cliente' | 'proveedor';
 
 interface QuickPartyCreateModalProps {
   kind: PartyKind;
+  initialParty?: Cliente | Proveedor;
   darkMode: boolean;
   onClose: () => void;
   onCreated: (party: Cliente | Proveedor) => void;
@@ -14,17 +16,18 @@ interface QuickPartyCreateModalProps {
 
 export const QuickPartyCreateModal: React.FC<QuickPartyCreateModalProps> = ({
   kind,
+  initialParty,
   darkMode,
   onClose,
   onCreated
 }) => {
-  const [tipoPersona, setTipoPersona] = useState<'NATURAL' | 'JURIDICA'>('JURIDICA');
-  const [documento, setDocumento] = useState('');
-  const [nombre, setNombre] = useState('');
-  const [email, setEmail] = useState('');
-  const [telefono, setTelefono] = useState('');
-  const [direccion, setDireccion] = useState('');
-  const [valorCondicion, setValorCondicion] = useState(kind === 'cliente' ? '0' : '30');
+  const [tipoPersona, setTipoPersona] = useState<'NATURAL' | 'JURIDICA'>(initialParty?.tipo_persona ?? 'JURIDICA');
+  const [documento, setDocumento] = useState(initialParty?.documento ?? '');
+  const [nombre, setNombre] = useState(initialParty?.nombre ?? '');
+  const [email, setEmail] = useState(initialParty?.email ?? '');
+  const [telefono, setTelefono] = useState(initialParty?.telefono ?? '');
+  const [direccion, setDireccion] = useState(initialParty?.direccion ?? '');
+  const [valorCondicion, setValorCondicion] = useState(String(initialParty ? ('limite_credito' in initialParty ? initialParty.limite_credito : initialParty.condicion_pago) : kind === 'cliente' ? 0 : 30));
   const [isSearching, setIsSearching] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -86,9 +89,18 @@ export const QuickPartyCreateModal: React.FC<QuickPartyCreateModalProps> = ({
     setErrorMessage('');
     try {
       const commonFields = { tipo_persona: tipoPersona, documento, nombre, email, telefono, direccion };
+      const requiredLength = tipoPersona === 'NATURAL' ? 8 : 11;
+      if (!new RegExp(`^\\d{${requiredLength}}$`).test(documento) || !nombre.trim()) throw new Error('Revisa el documento y el nombre.');
+      const records = kind === 'cliente' ? await customerRepository.list() : await supplierRepository.list();
+      const duplicate = records.find(party => party.id !== initialParty?.id && party.documento.trim() === documento.trim());
+      if (duplicate) throw new Error(`Posible duplicado: ${duplicate.nombre} ya tiene este documento. Revisa el maestro; no se modificaron registros.`);
       const createdParty = kind === 'cliente'
-        ? await clientesService.createCliente({ ...commonFields, limite_credito: Number(valorCondicion) || 0 })
-        : await proveedoresService.createProveedor({ ...commonFields, condicion_pago: Number(valorCondicion) || 0 });
+        ? initialParty
+          ? await customerRepository.update(initialParty.id, { ...commonFields, limite_credito: Number(valorCondicion) || 0 })
+          : await customerRepository.create({ ...commonFields, limite_credito: Number(valorCondicion) || 0 })
+        : initialParty
+          ? await supplierRepository.update(initialParty.id, { ...commonFields, condicion_pago: Number(valorCondicion) || 0 })
+          : await supplierRepository.create({ ...commonFields, condicion_pago: Number(valorCondicion) || 0 });
       onCreated(createdParty);
       onClose();
     } catch (error) {
@@ -106,8 +118,8 @@ export const QuickPartyCreateModal: React.FC<QuickPartyCreateModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm">
-      <div className={`my-auto w-full max-w-2xl overflow-hidden rounded-2xl border shadow-2xl ${
+    <div role="dialog" aria-modal="true" aria-label={`Formulario de ${entityLabel}`} className="fixed inset-0 z-[70] flex items-center justify-center overflow-y-auto bg-slate-950/60 p-4 backdrop-blur-sm">
+      <div className={`my-auto max-h-[90dvh] overflow-y-auto w-full max-w-2xl rounded-2xl border shadow-2xl ${
         darkMode ? 'border-slate-800 bg-slate-900 text-white' : 'border-gray-100 bg-white text-slate-900'
       }`}>
         <header className={`flex items-center justify-between border-b px-6 py-4 ${
@@ -115,7 +127,7 @@ export const QuickPartyCreateModal: React.FC<QuickPartyCreateModalProps> = ({
         }`}>
           <div className="flex items-center gap-3">
             {kind === 'cliente' ? <User size={20} className="text-sky-500" /> : <Building2 size={20} className="text-teal-500" />}
-            <h2 className="text-lg font-bold">Registrar nuevo {entityLabel}</h2>
+            <h2 className="text-lg font-bold">{initialParty ? 'Editar' : 'Registrar nuevo'} {entityLabel}</h2>
           </div>
           <button type="button" onClick={onClose} disabled={isSaving} aria-label="Cerrar formulario" className="rounded-lg p-2 text-slate-400 hover:bg-slate-200/50 hover:text-slate-700 disabled:opacity-50 dark:hover:bg-slate-700 dark:hover:text-white">
             <X size={18} />

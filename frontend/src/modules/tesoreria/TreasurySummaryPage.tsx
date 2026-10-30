@@ -1,0 +1,13 @@
+import { useCallback, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { erpModules } from '../../config/modules';
+import { treasuryService } from './runtime';
+import { money } from './money';
+import { Empty, Loading, TreasuryError, TreasuryHeader } from './TreasuryUI';
+import { button, panel } from './styles';
+import { useTreasuryLoad } from './useTreasuryLoad';
+export function TreasurySummaryPage() {
+ const [revision,setRevision]=useState(0);const resource=useTreasuryLoad(useCallback(()=>treasuryService.summary(),[]),revision);
+ const module=erpModules.find(m=>m.id==='tesoreria')!;
+ return <section className="min-w-0 space-y-5 text-slate-800 dark:text-slate-100"><header><TreasuryHeader title="Tesorería" description="Obligaciones y dinero registrado, separados por moneda."><button className={button} onClick={()=>setRevision(n=>n+1)}>Actualizar resumen</button></TreasuryHeader></header><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{module.links.map(link=><Link key={link.name} to={link.path!} className={`${panel} font-semibold text-blue-700 dark:text-blue-300`}>{link.name}<p className="mt-2 text-xs font-normal text-slate-500 dark:text-slate-400">{link.description}</p></Link>)}</div>{resource.loading?<Loading/>:resource.error?<TreasuryError error={resource.error} retry={()=>setRevision(n=>n+1)}/>:resource.data?.map(row=><article key={row.currency} className={panel}><h2 className="mb-4 text-lg font-semibold">{row.currency}</h2><dl className="grid gap-4 sm:grid-cols-3"><div><dt className="text-sm text-slate-500 dark:text-slate-400">Saldo por cobrar</dt><dd className="mt-1 text-xl font-semibold">{money(row.receivable,row.currency)}</dd></div><div><dt className="text-sm text-slate-500 dark:text-slate-400">Saldo por pagar</dt><dd className="mt-1 text-xl font-semibold">{money(row.payable,row.currency)}</dd></div><div><dt className="text-sm text-slate-500 dark:text-slate-400">Documentos vencidos con saldo</dt><dd className="mt-1 text-xl font-semibold">{row.overdue}</dd></div></dl><h3 className="mt-5 border-t border-slate-100 pt-4 font-semibold dark:border-slate-800">Cajas y bancos configurados</h3>{row.accounts.length?<ul className="mt-3 space-y-2 text-sm">{row.accounts.map(a=><li className="flex flex-wrap justify-between gap-2" key={a.id}><span>{a.code} · {a.name}{!a.active?' · Inactiva':''}</span><strong>{money(a.balanceMinor,a.currency)}</strong></li>)}</ul>:<Empty/>}</article>)}<p className="text-sm text-slate-500 dark:text-slate-400">La deuda y los movimientos de dinero son conceptos distintos. Cobros menos pagos no representa utilidad. Los vencimientos solo se calculan cuando existe una fecha real.</p></section>;
+}

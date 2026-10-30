@@ -29,7 +29,7 @@ export interface Cliente extends ClienteFormData {
 
 export const clientesService = {
   // Obtener clientes directamente desde Supabase
-  getClientes: async (): Promise<Cliente[]> => {
+  getClientes: async (strict = false): Promise<Cliente[]> => {
     try {
       const { data, error } = await supabase
         .from('clientes')
@@ -56,6 +56,7 @@ export const clientesService = {
 
       if (error) {
         console.error('Error al obtener clientes de Supabase:', error.message);
+        if (strict) throw new Error('No se pudieron cargar los clientes. Reintenta.');
         return [];
       }
 
@@ -75,6 +76,7 @@ export const clientesService = {
       }));
     } catch (err) {
       console.error('Error inesperado en getClientes:', err);
+      if (strict) throw new Error('No se pudieron cargar los clientes. Reintenta.');
       return [];
     }
   },

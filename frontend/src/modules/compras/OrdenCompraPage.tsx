@@ -1,5 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { pendingInvoiceService } from './facturas/pendingRuntime';
+import { invoiceInternalId } from './facturas/types';
+import { ProductSearchResults } from '../../components/masters/ProductSearchResults';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Link, useOutletContext } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Plus, Search, Package, Receipt, Building2, Trash2, CheckCircle, ArrowRight, Eye, UserPlus, History, X
@@ -13,6 +16,7 @@ import { recordDashboardMovement } from '../../lib/dashboardMovements';
 
 interface ProductLine {
   id: string;
+  productoId: string;
   codigo: string;
   descripcion: string;
   unidad: string;
@@ -23,6 +27,17 @@ interface ProductLine {
 
 export const OrdenCompraPage: React.FC = () => {
   const { darkMode } = useOutletContext<{ darkMode: boolean }>();
+  const savingOrderRef = useRef(false);
+  const [savingOrder, setSavingOrder] = useState(false);
+  const orderAttempt = useRef('');
+  const [invoiceGeneration, setInvoiceGeneration] = useState<{ order: OrdenCompra; error: string; internalId?: string } | null>(null);
+  const [generatingPending, setGeneratingPending] = useState(false);
+  async function generatePending(order: OrdenCompra) {
+    setGeneratingPending(true);
+    try { const row = await pendingInvoiceService.ensureFromOrder(order); setInvoiceGeneration({ order, error: '', internalId: invoiceInternalId(row) }); }
+    catch(e) { setInvoiceGeneration({ order, error: e instanceof Error ? e.message : 'No se pudo generar el pendiente.' }); }
+    finally { setGeneratingPending(false); }
+  }
   const [products, setProducts] = useState<ProductLine[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [inputCant, setInputCant] = useState('');
@@ -71,8 +86,10 @@ export const OrdenCompraPage: React.FC = () => {
 
   const refreshOrderHistory = async () => {
     const ordersFromService = await comprasService.getOrdenesCompra();
+    const cachedOrders = JSON.parse(localStorage.getItem('erp_ordenes_compra') || '[]');
     const dbOrders = ordersFromService.map((order: any) => ({
       ...order,
+      descuento_global: order.descuento_global ?? cachedOrders.find((cached: any) => cached.uuid === order.id || cached.id === order.id)?.descuento_global,
       id: order.id || order.uuid || order.codigo,
       codigo: order.codigo || order.numero || order.id,
       proveedor_nombre: order.proveedor_nombre || order.proveedor || 'Proveedor',
@@ -83,6 +100,7 @@ export const OrdenCompraPage: React.FC = () => {
       estado: order.estado || 'EMITIDA',
       fecha_emision: order.fecha_emision || order.fecha || new Date().toISOString(),
       items: (order.items || []).map((item: any) => ({
+        ...item,
         producto_codigo: item.producto_codigo || item.codigo || '',
         producto_descripcion: item.producto_descripcion || item.descripcion || 'Producto',
         unidad: item.unidad || 'UND',
@@ -91,11 +109,11 @@ export const OrdenCompraPage: React.FC = () => {
         subtotal: Number(item.subtotal ?? item.importe) || 0
       }))
     }));
-    const cachedOrders = JSON.parse(localStorage.getItem('erp_ordenes_compra') || '[]');
     const knownCodes = new Set(dbOrders.map(order => order.codigo));
     const localOrders = cachedOrders
       .filter((order: any) => !knownCodes.has(order.codigo || order.id))
       .map((order: any) => ({
+        ...order,
         id: order.uuid || order.id,
         codigo: order.codigo || order.id,
         proveedor_id: order.proveedor_id,
@@ -108,6 +126,7 @@ export const OrdenCompraPage: React.FC = () => {
         estado: 'EMITIDA' as const,
         fecha_emision: order.fecha || new Date().toISOString(),
         items: (order.items || []).map((item: any) => ({
+          ...item,
           producto_codigo: item.producto_codigo || item.codigo || '',
           producto_descripcion: item.producto_descripcion || item.descripcion || 'Producto',
           unidad: item.unidad || 'UND',
@@ -164,7 +183,8 @@ export const OrdenCompraPage: React.FC = () => {
   const handleAddProduct = () => {
     if (!searchQuery || !inputCant || !inputPrecio) return;
     
-    const dbProduct = selectedProduct || productDB.find(p => p.descripcion.toLowerCase().includes(searchQuery.toLowerCase()) || p.codigo.toLowerCase().includes(searchQuery.toLowerCase()));
+    const dbProduct = selectedProduct && productDB.find(product => product.id === selectedProduct.id);
+    if (!dbProduct) { showToast('Selecciona un producto existente de la lista de Maestros.'); return; }
     
     const cant = parseFloat(inputCant);
     const precio = parseFloat(inputPrecio);
@@ -173,9 +193,10 @@ export const OrdenCompraPage: React.FC = () => {
 
     const newProduct: ProductLine = {
       id: Math.random().toString(),
-      codigo: dbProduct ? dbProduct.codigo : 'GEN-001',
-      descripcion: dbProduct ? dbProduct.descripcion : searchQuery,
-      unidad: dbProduct ? dbProduct.unidad : 'UND',
+      productoId: dbProduct.id,
+      codigo: dbProduct.codigo,
+      descripcion: dbProduct.descripcion,
+      unidad: dbProduct.unidad,
       cantidad: cant,
       precioUnitario: precio,
       importe: cant * precio
@@ -202,6 +223,7 @@ export const OrdenCompraPage: React.FC = () => {
   const formatCurrency = (val: number) => `S/ ${val.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   const handleSaveOrder = async () => {
+    if (savingOrderRef.current) return;
     if (!selectedProveedor) {
       showToast('Selecciona un proveedor antes de grabar la orden de compra.');
       return;
@@ -212,12 +234,16 @@ export const OrdenCompraPage: React.FC = () => {
       return;
     }
 
-    const ocId = `OC-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000) + 1000}`;
+    savingOrderRef.current = true; setSavingOrder(true);
+    if (!orderAttempt.current) orderAttempt.current = `OC-${new Date().getFullYear()}-${Math.floor(Math.random() * 9000) + 1000}`;
+    const ocId = orderAttempt.current;
     const provNombre = selectedProveedor.nombre;
     const provRuc = selectedProveedor.ruc;
 
+    let savedOrder: OrdenCompra;
     try {
-      await comprasService.createOrdenCompra({
+      savedOrder = await comprasService.createOrdenCompra({
+        descuento_global: descValue,
         codigo: ocId,
         proveedor_id: selectedProveedor?.id,
         proveedor_nombre: provNombre,
@@ -226,6 +252,7 @@ export const OrdenCompraPage: React.FC = () => {
         igv,
         total,
         items: products.map(p => ({
+          producto_id: p.productoId,
           producto_codigo: p.codigo,
           producto_descripcion: p.descripcion,
           unidad: p.unidad,
@@ -235,19 +262,21 @@ export const OrdenCompraPage: React.FC = () => {
         }))
       });
     } catch (err) {
-      console.error('Error al guardar OC en backend:', err);
+      showToast(err instanceof Error ? err.message : 'No se pudo guardar la orden. El formulario se conserva.');
+      savingOrderRef.current = false; setSavingOrder(false); return;
     }
-    await refreshOrderHistory();
+    await generatePending(savedOrder);
+    try { await refreshOrderHistory(); } catch { showToast('La orden est\u00e1 guardada. No se pudo actualizar el historial.'); }
 
     const now = new Date();
-    recordDashboardMovement({
+    try { recordDashboardMovement({
       id: `compra-${ocId}`,
       timestamp: now.toISOString(),
       fecha: now.toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' }),
       descripcion: `Compra a ${provNombre.substring(0, 20)} - Orden #${ocId}`,
       tipo: 'salida',
       monto: total
-    });
+    }); } catch { /* The saved order and its pending invoice are independent of dashboard storage. */ }
 
     showToast(`¡Orden de Compra ${ocId} grabada con éxito! Se envió al módulo de ALMACÉN para la recepción de mercadería.`);
 
@@ -258,6 +287,7 @@ export const OrdenCompraPage: React.FC = () => {
     setInputCant('');
     setInputPrecio('');
     setSelectedProveedor(null);
+    orderAttempt.current = ''; savingOrderRef.current = false; setSavingOrder(false);
   };
 
   const handleNuevaCompra = () => {
@@ -284,6 +314,7 @@ export const OrdenCompraPage: React.FC = () => {
       className="max-w-[1400px] mx-auto pb-10 font-sans"
     >
       {/* Header (Título y botones superiores) */}
+      {invoiceGeneration && <div role={invoiceGeneration.error ? 'alert' : 'status'} className="mb-4 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-100"><p>Orden {invoiceGeneration.order.codigo} guardada. {invoiceGeneration.error ? 'No se pudo generar la referencia pendiente de factura.' : `Referencia interna: ${invoiceGeneration.internalId}`}</p>{invoiceGeneration.error && <><p>{invoiceGeneration.error}</p><button type="button" disabled={generatingPending} onClick={() => void generatePending(invoiceGeneration.order)} className="mt-2 rounded-lg border px-3 py-2">Generar pendiente sin volver a guardar la orden</button></>}<Link to="/facturas-proveedores" className="ml-3 inline-block py-2 font-semibold underline">Ver facturas de proveedores</Link>{invoiceGeneration.order.localBackupWarning && <p>{invoiceGeneration.order.localBackupWarning}</p>}</div>}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6 mt-2">
         <div>
           <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest mb-1.5 text-blue-500">
@@ -326,7 +357,7 @@ export const OrdenCompraPage: React.FC = () => {
             Nuevo proveedor
           </button>
           <button 
-            onClick={handleSaveOrder}
+            disabled={savingOrder} onClick={handleSaveOrder}
             className="flex items-center gap-2 px-4 py-2.5 text-sm font-bold rounded-lg text-white transition-colors shadow-sm"
             style={{ backgroundColor: tealColor }}
             onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#00a884'}
@@ -369,6 +400,7 @@ export const OrdenCompraPage: React.FC = () => {
                       placeholder="Seleccionar o buscar producto..." 
                       value={searchQuery}
                       onChange={(e) => {
+                        setSelectedProduct(null);
                         setSearchQuery(e.target.value);
                         setShowProductDropdown(true);
                       }}
@@ -380,51 +412,7 @@ export const OrdenCompraPage: React.FC = () => {
                     />
 
                     {/* Dropdown de opciones de productos */}
-                    {showProductDropdown && (
-                      <div className={`absolute left-0 right-0 top-full mt-1.5 z-40 rounded-xl shadow-2xl border overflow-hidden max-h-64 overflow-y-auto ${
-                        darkMode ? 'bg-slate-900 border-slate-700' : 'bg-white border-gray-200'
-                      }`}>
-                        {filteredProducts.length === 0 ? (
-                          <div className="p-4 text-center text-xs text-gray-500">
-                            No se encontraron productos coincidentes. Puedes darlos de alta en <strong className="text-teal-600">Mantenimientos</strong>.
-                          </div>
-                        ) : (
-                          filteredProducts.map((p) => (
-                            <div
-                              key={p.id}
-                              onMouseDown={() => {
-                                setSelectedProduct(p);
-                                setSearchQuery(p.descripcion);
-                                setInputPrecio(p.costoUnitario > 0 ? p.costoUnitario.toString() : p.precioVenta.toString());
-                                setShowProductDropdown(false);
-                              }}
-                              className={`p-3 border-b last:border-b-0 cursor-pointer flex items-center justify-between transition-colors ${
-                                darkMode ? 'border-slate-800 hover:bg-slate-800/80' : 'border-gray-100 hover:bg-teal-50/60'
-                              }`}
-                            >
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-teal-100 text-teal-800 dark:bg-teal-900/50 dark:text-teal-300">
-                                    {p.codigo}
-                                  </span>
-                                  <span className={`text-sm font-semibold ${darkMode ? 'text-white' : 'text-slate-800'}`}>
-                                    {p.descripcion}
-                                  </span>
-                                </div>
-                                <p className={`text-xs mt-0.5 ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>
-                                  {p.categoria} • Stock: <span className="font-bold text-teal-600">{p.stock} {p.unidad}</span>
-                                </p>
-                              </div>
-                              <div className="text-right">
-                                <span className={`text-xs font-bold ${darkMode ? 'text-teal-400' : 'text-[#00b894]'}`}>
-                                  S/ {(p.costoUnitario > 0 ? p.costoUnitario : p.precioVenta).toFixed(2)}
-                                </span>
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    )}
+                    {showProductDropdown && <ProductSearchResults products={filteredProducts} purchase={true} onSelect={p => { setSelectedProduct(p); setSearchQuery(p.descripcion); setInputPrecio(p.costoUnitario > 0 ? String(p.costoUnitario) : String(p.precioVenta)); setShowProductDropdown(false); }} />}
                   </div>
                 </div>
                 <div className="w-full md:w-32">
@@ -713,7 +701,7 @@ export const OrdenCompraPage: React.FC = () => {
             </div>
 
             <button 
-              onClick={handleSaveOrder}
+              disabled={savingOrder} onClick={handleSaveOrder}
               className="w-full py-3.5 rounded-xl text-white font-bold text-base transition-colors shadow-sm mb-4"
               style={{ backgroundColor: tealColor }}
               onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#00a884'}
@@ -758,6 +746,7 @@ export const OrdenCompraPage: React.FC = () => {
                   <td className={`px-6 py-3 ${darkMode ? 'text-slate-400' : 'text-slate-500'}`}>{new Date(order.fecha_emision).toLocaleDateString('es-PE')}</td>
                   <td className={`px-6 py-3 text-right font-semibold ${darkMode ? 'text-white' : 'text-slate-800'}`}>{formatCurrency(order.total)}</td>
                   <td className="px-6 py-3 text-center">
+                    <button type="button" disabled={generatingPending} onClick={() => void generatePending(order)} className="mr-2 rounded-lg border px-2 py-1 text-xs">Generar pendiente</button>
                     <button
                       type="button"
                       onClick={() => setSelectedOrderDetails({

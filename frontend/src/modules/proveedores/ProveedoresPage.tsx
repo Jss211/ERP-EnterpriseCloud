@@ -1,8 +1,10 @@
+import { DuplicateNotice } from '../../components/masters/DuplicateNotice';
+import { QuickPartyCreateModal } from '../../components/QuickPartyCreateModal';
 import React, { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { Plus, Search, Edit2, Trash2, X, Save, Building2, CalendarDays, Phone, Mail, MapPin, User, History, Calendar, Activity } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, X, Building2, CalendarDays, Phone, Mail, User, History, Calendar, Activity } from 'lucide-react';
 import { proveedoresService } from '../../services/proveedoresService';
-import type { ProveedorFormData, Proveedor } from '../../services/proveedoresService';
+import type { Proveedor } from '../../services/proveedoresService';
 
 export const ProveedoresPage: React.FC = () => {
   const { darkMode } = useOutletContext<{ darkMode: boolean }>();
@@ -10,137 +12,16 @@ export const ProveedoresPage: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isSearchingRuc, setIsSearchingRuc] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [selectedProveedor, setSelectedProveedor] = useState<Proveedor | null>(null);
   
-  const initialFormState: ProveedorFormData = {
-    tipo_persona: 'JURIDICA',
-    documento: '',
-    nombre: '',
-    email: '',
-    telefono: '',
-    direccion: '',
-    condicion_pago: 30
-  };
-
-  const [formData, setFormData] = useState<ProveedorFormData>(initialFormState);
-
   useEffect(() => {
     proveedoresService.getProveedores().then(data => setProveedores(data));
   }, []);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    setFormData(prev => ({ 
-      ...prev, 
-      [name]: name === 'condicion_pago' ? Number(value) : value 
-    }));
-  };
-
-  const handleTipoPersonaChange = (tipo: 'NATURAL' | 'JURIDICA') => {
-    setFormData(prev => ({
-      ...prev,
-      tipo_persona: tipo,
-      documento: '',
-      nombre: ''
-    }));
-  };
-
-  const closeModal = () => {
-    setIsModalOpen(false);
-    setEditingId(null);
-    setFormData(initialFormState);
-  };
-
-  const handleSearchDocumento = async () => {
-    const doc = formData.documento.trim();
-    if (!doc) {
-      alert("Por favor ingresa un número de documento.");
-      return;
-    }
-
-    if (formData.tipo_persona === 'NATURAL') {
-      if (doc.length !== 8) {
-        alert("El DNI debe tener 8 dígitos.");
-        return;
-      }
-      setIsSearchingRuc(true);
-      try {
-        const data = await proveedoresService.consultarDNI(doc);
-        if (data && (data.nombre || data.nombres)) {
-          const fullName = data.nombre || `${data.nombres || ''} ${data.apellido_paterno || ''} ${data.apellido_materno || ''}`.trim();
-          setFormData(prev => ({
-            ...prev,
-            nombre: fullName
-          }));
-        } else {
-          alert("No se encontró información para este DNI en RENIEC.");
-        }
-      } catch (error: any) {
-        alert(error.message || "Error al consultar el DNI.");
-      } finally {
-        setIsSearchingRuc(false);
-      }
-    } else {
-      if (doc.length !== 11) {
-        alert("El RUC debe tener 11 dígitos.");
-        return;
-      }
-      setIsSearchingRuc(true);
-      try {
-        const data = await proveedoresService.consultarRUC(doc);
-        const razonSocial = data.nombre_o_razon_social || (data as any).razon_social;
-        if (razonSocial) {
-          setFormData(prev => ({
-            ...prev,
-            nombre: razonSocial,
-            direccion: data.direccion || prev.direccion
-          }));
-        } else {
-          alert("No se encontró información para este RUC en SUNAT.");
-        }
-      } catch (error: any) {
-        alert(error.message || "Error al consultar el RUC.");
-      } finally {
-        setIsSearchingRuc(false);
-      }
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsSubmitting(true);
-    try {
-      if (editingId) {
-        const actualizado = await proveedoresService.updateProveedor(editingId, formData);
-        setProveedores(prev => prev.map(p => p.id === editingId ? actualizado : p));
-      } else {
-        const nuevoProveedor = await proveedoresService.createProveedor(formData);
-        setProveedores(prev => [...prev, nuevoProveedor]);
-      }
-      closeModal();
-    } catch (error) {
-      console.error("Error al guardar:", error);
-      alert("Hubo un error al guardar el proveedor.");
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   const handleEdit = (proveedor: Proveedor) => {
-    setFormData({
-      tipo_persona: proveedor.tipo_persona,
-      documento: proveedor.documento,
-      nombre: proveedor.nombre,
-      email: proveedor.email,
-      telefono: proveedor.telefono,
-      direccion: proveedor.direccion,
-      condicion_pago: proveedor.condicion_pago
-    });
     setEditingId(proveedor.id);
     setIsModalOpen(true);
   };
@@ -168,6 +49,7 @@ export const ProveedoresPage: React.FC = () => {
 
   return (
     <div className="space-y-6 relative">
+      <DuplicateNotice records={proveedores.map(record => ({ id: record.id, key: record.documento }))} />
       <div className={`flex justify-between items-center p-5 rounded-xl shadow-sm border transition-colors ${
         darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-gray-100'
       }`}>
@@ -176,7 +58,7 @@ export const ProveedoresPage: React.FC = () => {
           <p className={`text-sm mt-1 ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>Administra tus proveedores, compras e historial comercial.</p>
         </div>
         <button 
-          onClick={() => { setEditingId(null); setFormData(initialFormState); setIsModalOpen(true); }}
+          onClick={() => { setEditingId(null); setIsModalOpen(true); }}
           className="bg-teal-600 hover:bg-teal-700 text-white px-5 py-2.5 rounded-lg flex items-center gap-2 transition-colors font-medium shadow-sm shadow-teal-200"
         >
           <Plus size={18} />
@@ -378,184 +260,15 @@ export const ProveedoresPage: React.FC = () => {
         </div>
       )}
 
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-gray-900/60 backdrop-blur-sm transition-opacity">
-          <div className={`rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 border ${
-            darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-gray-100'
-          }`}>
-            <div className={`px-6 py-4 border-b flex justify-between items-center ${
-              darkMode ? 'bg-slate-800/50 border-slate-800' : 'bg-gray-50/50 border-gray-100'
-            }`}>
-              <h2 className={`text-lg font-bold flex items-center gap-2 ${darkMode ? 'text-white' : 'text-gray-800'}`}>
-                <Building2 size={20} className="text-teal-600" />
-                {editingId ? 'Editar Proveedor' : 'Registrar Nuevo Proveedor'}
-              </h2>
-              <button onClick={closeModal} className={`transition-colors p-1 ${
-                darkMode ? 'text-slate-400 hover:text-red-400' : 'text-gray-400 hover:text-red-500'
-              }`} disabled={isSubmitting}>
-                <X size={20} />
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit} className="p-6">
-              <div className="mb-6 flex flex-col items-center">
-                <label className={`text-sm font-semibold mb-2 ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>Tipo de Proveedor</label>
-                <div className={`p-1 rounded-lg w-full max-w-xs shadow-inner flex ${
-                  darkMode ? 'bg-slate-800' : 'bg-gray-100'
-                }`}>
-                  <button type="button" onClick={() => handleTipoPersonaChange('NATURAL')}
-                    className={`flex-1 flex justify-center items-center gap-2 py-2 text-sm font-medium rounded-md transition-all duration-200 ${
-                      formData.tipo_persona === 'NATURAL' 
-                        ? (darkMode ? 'bg-slate-700 shadow-sm text-blue-400' : 'bg-white shadow-sm text-blue-600') 
-                        : (darkMode ? 'text-slate-400 hover:text-slate-200' : 'text-gray-500 hover:text-gray-700')
-                    }`}
-                  >
-                    <User size={16} /> Natural
-                  </button>
-                  <button type="button" onClick={() => handleTipoPersonaChange('JURIDICA')}
-                    className={`flex-1 flex justify-center items-center gap-2 py-2 text-sm font-medium rounded-md transition-all duration-200 ${
-                      formData.tipo_persona === 'JURIDICA' 
-                        ? (darkMode ? 'bg-slate-700 shadow-sm text-teal-400' : 'bg-white shadow-sm text-teal-600') 
-                        : (darkMode ? 'text-slate-400 hover:text-slate-200' : 'text-gray-500 hover:text-gray-700')
-                    }`}
-                  >
-                    <Building2 size={16} /> Empresa
-                  </button>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="col-span-2 md:col-span-1 space-y-4">
-                  <h3 className={`text-sm font-bold uppercase tracking-wider mb-2 border-b pb-2 ${
-                    darkMode ? 'text-slate-400 border-slate-800' : 'text-gray-400 border-gray-200'
-                  }`}>Datos Principales</h3>
-                  <div>
-                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-slate-300' : 'text-gray-700'}`}>
-                      {formData.tipo_persona === 'JURIDICA' ? 'RUC *' : 'DNI / CE *'}
-                    </label>
-                    <div className="flex gap-2">
-                      <input 
-                        required 
-                        type="text" 
-                        name="documento" 
-                        value={formData.documento} 
-                        onChange={handleInputChange}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            handleSearchDocumento();
-                          }
-                        }}
-                        className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 ${
-                          darkMode ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:border-teal-500' : 'bg-white border-gray-300 text-gray-900 focus:border-teal-500'
-                        }`} 
-                        placeholder={formData.tipo_persona === 'JURIDICA' ? "Ej: 20512345678 (Presiona Enter o Buscar)" : "Ej: 10456789012 (Presiona Enter o Buscar)"} 
-                        maxLength={formData.tipo_persona === 'JURIDICA' ? 11 : 12}
-                      />
-                      <button 
-                        type="button" 
-                        onClick={handleSearchDocumento} 
-                        disabled={isSearchingRuc}
-                        className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg font-medium text-xs transition-colors flex items-center gap-1.5 shadow-sm disabled:opacity-70 whitespace-nowrap"
-                        title={formData.tipo_persona === 'JURIDICA' ? "Consultar RUC en SUNAT vía Migo API" : "Consultar DNI en RENIEC vía Migo API"}
-                      >
-                        {isSearchingRuc ? (
-                          <>
-                            <div className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin"></div>
-                            <span>Consultando...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Search size={15} />
-                            <span>Buscar {formData.tipo_persona === 'JURIDICA' ? 'SUNAT' : 'RENIEC'}</span>
-                          </>
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                  <div>
-                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-slate-300' : 'text-gray-700'}`}>
-                      {formData.tipo_persona === 'JURIDICA' ? 'Razón Social *' : 'Nombres y Apellidos *'}
-                    </label>
-                    <input required type="text" name="nombre" value={formData.nombre} onChange={handleInputChange}
-                      className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 ${
-                        darkMode ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:border-teal-500' : 'bg-white border-gray-300 text-gray-900 focus:border-teal-500'
-                      }`} 
-                      placeholder={formData.tipo_persona === 'JURIDICA' ? "Nombre de la empresa" : "Ej: Juan Pérez"} />
-                  </div>
-                  <div>
-                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-slate-300' : 'text-gray-700'}`}>Dirección / Domicilio</label>
-                    <div className="relative">
-                      <MapPin size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <input type="text" name="direccion" value={formData.direccion} onChange={handleInputChange}
-                        className={`w-full pl-9 pr-3 py-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 ${
-                          darkMode ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:border-teal-500' : 'bg-white border-gray-300 text-gray-900 focus:border-teal-500'
-                        }`} 
-                        placeholder="Av. Principal 123" />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="col-span-2 md:col-span-1 space-y-4">
-                  <h3 className={`text-sm font-bold uppercase tracking-wider mb-2 border-b pb-2 ${
-                    darkMode ? 'text-slate-400 border-slate-800' : 'text-gray-400 border-gray-200'
-                  }`}>Contacto & Acuerdos</h3>
-                  <div>
-                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-slate-300' : 'text-gray-700'}`}>Correo Electrónico *</label>
-                    <div className="relative">
-                      <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <input required type="email" name="email" value={formData.email} onChange={handleInputChange}
-                        className={`w-full pl-9 pr-3 py-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 ${
-                          darkMode ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:border-teal-500' : 'bg-white border-gray-300 text-gray-900 focus:border-teal-500'
-                        }`} 
-                        placeholder="ventas@proveedor.com" />
-                    </div>
-                  </div>
-                  <div>
-                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-slate-300' : 'text-gray-700'}`}>Teléfono de Contacto</label>
-                    <div className="relative">
-                      <Phone size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <input type="tel" name="telefono" value={formData.telefono} onChange={handleInputChange}
-                        className={`w-full pl-9 pr-3 py-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 ${
-                          darkMode ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:border-teal-500' : 'bg-white border-gray-300 text-gray-900 focus:border-teal-500'
-                        }`} 
-                        placeholder="+51 987 654 321" />
-                    </div>
-                  </div>
-                  <div>
-                    <label className={`block text-sm font-medium mb-1 ${darkMode ? 'text-slate-300' : 'text-gray-700'}`}>Condición de Pago (Días)</label>
-                    <div className="relative">
-                      <CalendarDays size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                      <input type="number" name="condicion_pago" value={formData.condicion_pago} onChange={handleInputChange} min="0" step="15"
-                        className={`w-full pl-9 pr-3 py-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-500 ${
-                          darkMode ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:border-teal-500' : 'bg-white border-gray-300 text-gray-900 focus:border-teal-500'
-                        }`} 
-                        placeholder="Ej: 30" />
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className={`mt-8 pt-4 border-t flex justify-end gap-3 ${
-                darkMode ? 'border-slate-800' : 'border-gray-100'
-              }`}>
-                <button type="button" onClick={closeModal} disabled={isSubmitting}
-                  className={`px-5 py-2.5 font-medium rounded-lg transition-colors ${
-                    darkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'
-                  }`}>
-                  Cancelar
-                </button>
-                <button type="submit" disabled={isSubmitting}
-                  className="px-5 py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-medium rounded-lg shadow-sm flex items-center gap-2 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
-                >
-                  {isSubmitting ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div> : <Save size={18} />}
-                  <span>{isSubmitting ? 'Guardando...' : (editingId ? 'Guardar Cambios' : 'Guardar Proveedor')}</span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      {isModalOpen && <QuickPartyCreateModal
+        key={editingId ?? 'new'} kind="proveedor" darkMode={darkMode}
+        initialParty={proveedores.find(item => item.id === editingId)}
+        onClose={() => { setIsModalOpen(false); setEditingId(null); }}
+        onCreated={party => {
+          const saved = party as Proveedor;
+          setProveedores(prev => prev.some(item => item.id === saved.id) ? prev.map(item => item.id === saved.id ? saved : item) : [...prev, saved]);
+        }}
+      />}
     </div>
   );
 };

@@ -1,13 +1,15 @@
+import { DuplicateNotice } from '../../components/masters/DuplicateNotice';
+import { ProductMasterModal } from '../../components/ProductMasterModal';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useOutletContext, useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Boxes, Plus, Search, AlertTriangle, ArrowRightLeft, 
-  Download, Edit2, Trash2, PackageCheck, Layers, Package, X, Save
+  Download, Edit2, Trash2, PackageCheck, Layers, Package
 } from 'lucide-react';
 import { inventarioService, type Producto } from '../../services/inventarioService';
 
-export const StockProductosPage: React.FC = () => {
+export const StockProductosPage = ({ masterMode = false }: { masterMode?: boolean }) => {
   const { darkMode } = useOutletContext<{ darkMode: boolean }>();
   const navigate = useNavigate();
 
@@ -20,20 +22,6 @@ export const StockProductosPage: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Producto | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  const initialForm = {
-    codigo: '',
-    descripcion: '',
-    categoria: 'Hardware',
-    unidad: 'NIU',
-    almacen: 'Almacén Central',
-    costoUnitario: '',
-    precioVenta: '',
-    stockMinimo: '5',
-    stockInicial: '0'
-  };
-
-  const [form, setForm] = useState(initialForm);
 
   const loadProductos = async () => {
     const data = await inventarioService.getProductos();
@@ -80,23 +68,11 @@ export const StockProductosPage: React.FC = () => {
 
   const handleOpenCreate = () => {
     setEditingProduct(null);
-    setForm(initialForm);
     setIsModalOpen(true);
   };
 
   const handleOpenEdit = (p: Producto) => {
     setEditingProduct(p);
-    setForm({
-      codigo: p.codigo,
-      descripcion: p.descripcion,
-      categoria: p.categoria,
-      unidad: p.unidad,
-      almacen: p.almacen,
-      costoUnitario: p.costoUnitario.toString(),
-      precioVenta: p.precioVenta.toString(),
-      stockMinimo: p.stockMinimo.toString(),
-      stockInicial: p.stock.toString()
-    });
     setIsModalOpen(true);
   };
 
@@ -105,47 +81,6 @@ export const StockProductosPage: React.FC = () => {
       await inventarioService.deleteProducto(id);
       await loadProductos();
       showToast(`Producto ${name} eliminado.`);
-    }
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.codigo.trim() || !form.descripcion.trim()) {
-      alert('Código y descripción son obligatorios.');
-      return;
-    }
-
-    try {
-      if (editingProduct) {
-        await inventarioService.updateProducto(editingProduct.id, {
-          codigo: form.codigo.trim().toUpperCase(),
-          descripcion: form.descripcion.trim(),
-          categoria: form.categoria,
-          unidad: form.unidad,
-          almacen: form.almacen,
-          costoUnitario: Number(form.costoUnitario) || 0,
-          precioVenta: Number(form.precioVenta) || 0,
-          stockMinimo: Number(form.stockMinimo) || 0
-        });
-        showToast('Producto actualizado con éxito.');
-      } else {
-        await inventarioService.createProducto({
-          codigo: form.codigo.trim().toUpperCase(),
-          descripcion: form.descripcion.trim(),
-          categoria: form.categoria,
-          unidad: form.unidad,
-          almacen: form.almacen,
-          costoUnitario: Number(form.costoUnitario) || 0,
-          precioVenta: Number(form.precioVenta) || 0,
-          stockMinimo: Number(form.stockMinimo) || 0,
-          stockInicial: Number(form.stockInicial) || 0
-        });
-        showToast('Nuevo producto registrado e ingresado al kardex.');
-      }
-      setIsModalOpen(false);
-      await loadProductos();
-    } catch (err: any) {
-      alert(`Error al guardar: ${err.message}`);
     }
   };
 
@@ -205,6 +140,7 @@ export const StockProductosPage: React.FC = () => {
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="max-w-[1400px] mx-auto pb-10 font-sans">
       
+      <DuplicateNotice records={productos.map(record => ({ id: record.id, key: record.codigo }))} />
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6 mt-2">
         <div>
@@ -216,7 +152,7 @@ export const StockProductosPage: React.FC = () => {
             <span className="text-gray-400 dark:text-slate-500">STOCK DE PRODUCTOS</span>
           </div>
           <h1 className={`text-[26px] font-bold tracking-tight leading-none ${darkMode ? 'text-white' : 'text-[#2d3436]'}`}>
-            Stock de productos
+            {masterMode ? 'Maestros · Productos' : 'Stock de productos'}
           </h1>
           <p className={`mt-2 text-[13px] ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>
             Monitoreo en tiempo real de existencias, almacenes, costos y valorización de inventario.
@@ -365,13 +301,14 @@ export const StockProductosPage: React.FC = () => {
                 <th className="px-5 py-3.5 text-right">Mínimo</th>
                 <th className="px-5 py-3.5 text-right">Valor Total</th>
                 <th className="px-5 py-3.5 text-center">Estado</th>
+                {masterMode && <th className="px-5 py-3.5">Acciones</th>}
               </tr>
             </thead>
             <tbody className={`divide-y ${darkMode ? 'divide-slate-800' : 'divide-slate-100'}`}>
               <AnimatePresence>
                 {filteredProductos.length === 0 ? (
                   <tr>
-                    <td colSpan={10} className="py-16 text-center">
+                    <td colSpan={masterMode ? 11 : 10} className="py-16 text-center">
                       <div className={`inline-flex items-center justify-center w-12 h-12 rounded-full mb-3 ${darkMode ? 'bg-slate-800 text-slate-600' : 'bg-slate-100 text-slate-400'}`}>
                         <Package size={24} />
                       </div>
@@ -428,6 +365,7 @@ export const StockProductosPage: React.FC = () => {
                             </span>
                           )}
                         </td>
+                        {masterMode && <td className="px-5 py-3.5"><button aria-label={`Editar ${prod.codigo}`} onClick={() => handleOpenEdit(prod)} className="p-2 text-blue-600"><Edit2 size={16} /></button><button aria-label={`Eliminar ${prod.codigo}`} onClick={() => void handleDelete(prod.id, prod.descripcion)} className="p-2 text-rose-600"><Trash2 size={16} /></button></td>}
                       </motion.tr>
                     );
                   })
@@ -438,155 +376,7 @@ export const StockProductosPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Modal Crear / Editar Producto */}
-      <AnimatePresence>
-        {isModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={() => setIsModalOpen(false)} className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" />
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.95, y: 10 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 10 }}
-              className={`relative w-full max-w-xl rounded-2xl shadow-2xl overflow-hidden ${darkMode ? 'bg-slate-900 border border-slate-800' : 'bg-white'}`}
-            >
-              <div className={`px-6 py-4 flex items-center justify-between border-b ${darkMode ? 'border-slate-800' : 'border-gray-100'}`}>
-                <h3 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-slate-800'}`}>
-                  {editingProduct ? 'Editar Producto' : 'Registrar Nuevo Producto'}
-                </h3>
-                <button onClick={() => setIsModalOpen(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
-              </div>
-
-              <form onSubmit={handleSubmit} className="p-6 space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className={`block text-xs font-bold uppercase mb-1.5 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>Código / SKU *</label>
-                    <input 
-                      required
-                      type="text" 
-                      placeholder="Ej: LAP-HP450" 
-                      value={form.codigo}
-                      onChange={(e) => setForm({ ...form, codigo: e.target.value })}
-                      className={`w-full px-3 py-2 rounded-lg border text-sm uppercase ${darkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`}
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-xs font-bold uppercase mb-1.5 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>Categoría</label>
-                    <input 
-                      type="text" 
-                      placeholder="Ej: Laptops, Monitores" 
-                      value={form.categoria}
-                      onChange={(e) => setForm({ ...form, categoria: e.target.value })}
-                      className={`w-full px-3 py-2 rounded-lg border text-sm ${darkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`}
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className={`block text-xs font-bold uppercase mb-1.5 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>Descripción del Producto *</label>
-                  <input 
-                    required
-                    type="text" 
-                    placeholder="Ej: Laptop HP ProBook 450 G8 15.6'' Core i7" 
-                    value={form.descripcion}
-                    onChange={(e) => setForm({ ...form, descripcion: e.target.value })}
-                    className={`w-full px-3 py-2 rounded-lg border text-sm ${darkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`}
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className={`block text-xs font-bold uppercase mb-1.5 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>Unidad de Medida</label>
-                    <input 
-                      type="text" 
-                      placeholder="NIU, UNID, KGM" 
-                      value={form.unidad}
-                      onChange={(e) => setForm({ ...form, unidad: e.target.value })}
-                      className={`w-full px-3 py-2 rounded-lg border text-sm ${darkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`}
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-xs font-bold uppercase mb-1.5 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>Almacén Asignado</label>
-                    <input 
-                      type="text" 
-                      placeholder="Almacén Central" 
-                      value={form.almacen}
-                      onChange={(e) => setForm({ ...form, almacen: e.target.value })}
-                      className={`w-full px-3 py-2 rounded-lg border text-sm ${darkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`}
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className={`block text-xs font-bold uppercase mb-1.5 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>Costo Unitario (S/)</label>
-                    <input 
-                      type="number" 
-                      step="0.01"
-                      placeholder="0.00" 
-                      value={form.costoUnitario}
-                      onChange={(e) => setForm({ ...form, costoUnitario: e.target.value })}
-                      className={`w-full px-3 py-2 rounded-lg border text-sm ${darkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`}
-                    />
-                  </div>
-                  <div>
-                    <label className={`block text-xs font-bold uppercase mb-1.5 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>Precio de Venta (S/)</label>
-                    <input 
-                      type="number" 
-                      step="0.01"
-                      placeholder="0.00" 
-                      value={form.precioVenta}
-                      onChange={(e) => setForm({ ...form, precioVenta: e.target.value })}
-                      className={`w-full px-3 py-2 rounded-lg border text-sm ${darkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`}
-                    />
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className={`block text-xs font-bold uppercase mb-1.5 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>Stock Mínimo (Alerta)</label>
-                    <input 
-                      type="number" 
-                      placeholder="5" 
-                      value={form.stockMinimo}
-                      onChange={(e) => setForm({ ...form, stockMinimo: e.target.value })}
-                      className={`w-full px-3 py-2 rounded-lg border text-sm ${darkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`}
-                    />
-                  </div>
-                  {!editingProduct && (
-                    <div>
-                      <label className={`block text-xs font-bold uppercase mb-1.5 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`}>Stock Inicial</label>
-                      <input 
-                        type="number" 
-                        placeholder="0" 
-                        value={form.stockInicial}
-                        onChange={(e) => setForm({ ...form, stockInicial: e.target.value })}
-                        className={`w-full px-3 py-2 rounded-lg border text-sm ${darkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-slate-50 border-slate-200'}`}
-                      />
-                    </div>
-                  )}
-                </div>
-
-                <div className={`pt-4 border-t flex justify-end gap-3 ${darkMode ? 'border-slate-800' : 'border-gray-100'}`}>
-                  <button 
-                    type="button" 
-                    onClick={() => setIsModalOpen(false)}
-                    className={`px-4 py-2 rounded-lg text-sm font-semibold border ${darkMode ? 'border-slate-700 text-slate-300' : 'border-slate-200 text-slate-600'}`}
-                  >
-                    Cancelar
-                  </button>
-                  <button 
-                    type="submit" 
-                    className="px-5 py-2 rounded-lg text-sm font-bold bg-blue-600 text-white hover:bg-blue-700 flex items-center gap-2"
-                  >
-                    <Save size={16} />
-                    Guardar
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
+      {isModalOpen && <ProductMasterModal key={editingProduct?.id ?? 'new'} editingProduct={editingProduct} darkMode={darkMode} onClose={() => setIsModalOpen(false)} onSaved={() => { void loadProductos(); showToast('Producto guardado.'); }} />}
 
       {/* Toast */}
       <AnimatePresence>

@@ -11,6 +11,7 @@ export const FacturacionPage: React.FC = () => {
   const { darkMode } = useOutletContext<{ darkMode: boolean }>();
   
   // Órdenes pendientes generadas desde Orden de Venta
+  const [duplicateNotice, setDuplicateNotice] = useState('');
   const [pendingOrders, setPendingOrders] = useState<any[]>([]);
 
   useEffect(() => {
@@ -63,30 +64,16 @@ export const FacturacionPage: React.FC = () => {
         // Filtrar órdenes locales para descartar aquellas que ya están en Supabase o ya facturadas
         const unrepresentedLocal = localOrders.filter((lo: any) => !knownOrderRefs.has(lo.id) && !billedOrders.has(lo.id));
 
-        // Deduplicar estrictamente por ID y por combinación de cliente y monto
-        const map = new Map<string, any>();
-        [...formattedDb, ...unrepresentedLocal].forEach(o => {
-          const uniqueKey = o.id || `${o.cliente}-${o.total}`;
-          const signature = `${o.cliente.trim().toLowerCase()}-${Number(o.total).toFixed(2)}`;
-          
-          let alreadyExists = false;
-          for (const existing of map.values()) {
-            const existingSig = `${existing.cliente.trim().toLowerCase()}-${Number(existing.total).toFixed(2)}`;
-            if (existing.id === o.id || existingSig === signature) {
-              alreadyExists = true;
-              break;
-            }
-          }
-
-          if (!alreadyExists) {
-            map.set(uniqueKey, o);
-          }
+        // Preserve all distinct document IDs. Historical browser data remains untouched.
+        const candidates = [...formattedDb, ...unrepresentedLocal];
+        const signatures = new Map<string, number>();
+        candidates.forEach(order => {
+          const signature = `${String(order.cliente).trim().toLocaleLowerCase()}-${Number(order.total).toFixed(2)}`;
+          signatures.set(signature, (signatures.get(signature) ?? 0) + 1);
         });
-
-        const uniqueOrders = Array.from(map.values());
-
-        // Actualizar localStorage para limpiar cualquier registro duplicado histórico
-        localStorage.setItem('erp_ordenes_venta', JSON.stringify(uniqueOrders));
+        const possibleDuplicates = [...signatures.values()].filter(count => count > 1).length;
+        setDuplicateNotice(possibleDuplicates ? `${possibleDuplicates} coincidencia(s) de cliente e importe. Revisa los documentos antes de facturar; no se eliminaron ni fusionaron datos.` : '');
+        const uniqueOrders = candidates;
 
         setPendingOrders(uniqueOrders);
       } catch (e) {
@@ -188,6 +175,7 @@ export const FacturacionPage: React.FC = () => {
     >
       {/* Header idéntico a Orden de Compra/Venta */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6 mt-2 print:hidden">
+      {duplicateNotice && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200">{duplicateNotice}</p>}
         <div>
           <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest mb-1.5 text-blue-500">
             <span>ERP</span>

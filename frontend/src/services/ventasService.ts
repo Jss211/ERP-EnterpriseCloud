@@ -32,9 +32,9 @@ export interface Venta extends VentaFormData {
 
 export const ventasService = {
   // Obtener ventas reales desde Supabase
-  getVentas: async (): Promise<Venta[]> => {
+  getVentas: async (strict = false, financialRead = false, completeRead = false): Promise<Venta[]> => {
     try {
-      const { data, error } = await supabase
+      const query = () => supabase
         .from('ventas')
         .select(`
           id,
@@ -60,17 +60,36 @@ export const ventasService = {
         `)
         .order('created_at', { ascending: false });
 
+      let { data, error } = await ((financialRead || completeRead) ? query().order('id', { ascending: true }).range(0,999) : query());
+      if ((financialRead || completeRead) && !error) {
+        const all: any[] = [...(data || [])];
+        const ids = new Set(all.map(row => row.id));
+        let last = data || [];
+        for (let page = 1; last.length === 1000; page++) {
+          const next = await query().order('id', { ascending: true }).range(page * 1000, (page + 1) * 1000 - 1);
+          if (next.error) throw next.error;
+          last = next.data || [];
+          for (const row of last) {
+            if (ids.has(row.id)) throw new Error('Las ventas cambiaron durante la consulta financiera. Reintenta.');
+            ids.add(row.id); all.push(row);
+          }
+        }
+        data = all;
+      }
+
       if (error) {
         console.error('Error al obtener ventas de Supabase:', error.message);
+        if (strict) throw new Error('No se pudieron cargar las ventas. Intenta nuevamente.');
         return [];
       }
 
+      if (financialRead && (data || []).some((v: any) => v.total === undefined || v.total === null || v.total === '' || !Number.isFinite(Number(v.total)) || !['PEN','USD'].includes(v.moneda) || !['Pendiente','Completada','Anulada'].includes(v.estado))) throw new Error('Una venta no tiene importe, moneda o estado financiero disponible.');
       return (data || []).map((v: any) => ({
         id: v.id,
         numero: v.numero || '',
         cliente_id: v.cliente_id || '',
         cliente_nombre: v.cliente_nombre || '',
-        fecha: v.fecha || new Date().toISOString(),
+        fecha: v.fecha || ((financialRead || completeRead) ? '' : new Date().toISOString()),
         metodo_pago: v.metodo_pago || 'Efectivo',
         moneda: v.moneda || 'PEN',
         subtotal: Number(v.subtotal) || 0,
@@ -89,6 +108,7 @@ export const ventasService = {
       }));
     } catch (err) {
       console.error('Error en getVentas:', err);
+      if (strict) throw new Error('No se pudieron cargar las ventas. Intenta nuevamente.');
       return [];
     }
   },

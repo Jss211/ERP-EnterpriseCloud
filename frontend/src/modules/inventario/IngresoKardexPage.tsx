@@ -1,3 +1,4 @@
+import { ProductMasterModal } from '../../components/ProductMasterModal';
 import React, { useState, useEffect } from 'react';
 import { useOutletContext, useNavigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -26,6 +27,7 @@ export const IngresoKardexPage: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
 
+  const [missingProduct, setMissingProduct] = useState<ItemIngreso | null>(null);
   const [productos, setProductos] = useState<Producto[]>([]);
   const [proveedores, setProveedores] = useState<Proveedor[]>([]);
   const [ordenesCompra, setOrdenesCompra] = useState<any[]>([]);
@@ -96,7 +98,8 @@ export const IngresoKardexPage: React.FC = () => {
           const itDesc = it.producto_descripcion || it.descripcion || '';
           const itCant = Number(it.cantidad) || 1;
           const itPrecio = Number(it.costo_unitario || it.precioUnitario) || 0;
-          const prodMatch = productos.find(p => p.codigo === itCodigo || p.descripcion === itDesc);
+          const codeMatches = productos.filter(product => product.codigo === itCodigo);
+          const prodMatch = productos.find(product => product.id === it.producto_id) ?? (codeMatches.length === 1 ? codeMatches[0] : undefined);
           return {
             id: Math.random().toString(),
             productoId: prodMatch ? prodMatch.id : '',
@@ -180,26 +183,19 @@ export const IngresoKardexPage: React.FC = () => {
     try {
       const currentProds = await inventarioService.getProductos();
 
-      for (const item of items) {
-        let prodId = item.productoId;
-        const match = currentProds.find(p => p.id === prodId || p.codigo === item.codigo || p.descripcion === item.descripcion);
-        if (match) {
-          prodId = match.id;
-        } else {
-          // Si el producto no existía en la base de datos, crearlo automáticamente
-          const nuevo = await inventarioService.createProducto({
-            codigo: item.codigo,
-            descripcion: item.descripcion,
-            categoria: 'General',
-            unidad: 'UND',
-            costoUnitario: item.costoUnitario,
-            precioVenta: item.costoUnitario * 1.3,
-            stockInicial: 0,
-            stockMinimo: 5,
-            almacen: item.almacen || almacenDestino
-          });
-          prodId = nuevo.id;
-        }
+      const resolvedItems = items.map(item => {
+        const byId = currentProds.find(product => product.id === item.productoId);
+        const byCode = currentProds.filter(product => product.codigo === item.codigo);
+        return { item, product: byId ?? (byCode.length === 1 ? byCode[0] : undefined) };
+      });
+      const missing = resolvedItems.find(line => !line.product);
+      if (missing) {
+        setMissingProduct(missing.item);
+        showToast('Revisa y registra el producto en el formulario maestro antes de confirmar el ingreso. No se registraron movimientos.');
+        return;
+      }
+      for (const { item, product } of resolvedItems) {
+        const prodId = product!.id;
 
         await inventarioService.registrarMovimiento({
           productoId: prodId,
@@ -581,6 +577,8 @@ export const IngresoKardexPage: React.FC = () => {
         </div>
 
       </div>
+
+      {missingProduct && <ProductMasterModal editingProduct={null} initialDraft={{ codigo: missingProduct.codigo, descripcion: missingProduct.descripcion, almacen: missingProduct.almacen, costoUnitario: missingProduct.costoUnitario }} darkMode={darkMode} onClose={() => setMissingProduct(null)} onSaved={async () => { setProductos(await inventarioService.getProductos()); }} />}
 
       {/* Toast */}
       <AnimatePresence>

@@ -1,63 +1,35 @@
 import React, { useState, useEffect } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { 
-  LayoutDashboard, ShoppingCart, Receipt, FileText, 
-  Package, ArrowRightLeft, Boxes, FileBarChart, 
-  Settings, Menu, Bell, Sun, Moon, LogIn, LogOut, User as UserIcon,
-  Layers
-} from 'lucide-react';
+import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
+import { LayoutDashboard, Menu, Bell, Sun, Moon, LogIn, LogOut } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/lib/supabase';
-
-const MENU_SECTIONS = [
-  {
-    title: 'INICIO',
-    items: [
-      { name: 'Panel', path: '/', icon: <LayoutDashboard size={20} /> },
-    ]
-  },
-  {
-    title: 'MAESTROS',
-    items: [
-      { name: 'Datos maestros', path: '/maestros', icon: <Layers size={20} /> },
-    ]
-  },
-  {
-    title: 'COMPRAS',
-    items: [
-      { name: 'Orden de compra', path: '/orden-compra', icon: <ShoppingCart size={20} /> },
-    ]
-  },
-  {
-    title: 'VENTAS',
-    items: [
-      { name: 'Cotizaciones', path: '/cotizaciones', icon: <FileText size={20} /> },
-      { name: 'Orden de venta', path: '/orden-venta', icon: <Receipt size={20} /> },
-      { name: 'Facturación', path: '/facturacion', icon: <FileText size={20} /> },
-      { name: 'Estado de cuenta', path: '/estado-cuenta', icon: <FileBarChart size={20} /> },
-    ]
-  },
-  {
-    title: 'INVENTARIOS',
-    items: [
-      { name: 'Stock de productos', path: '/stock-productos', icon: <Boxes size={20} /> },
-      { name: 'Ingreso al Kardex', path: '/ingreso-kardex', icon: <Package size={20} /> },
-      { name: 'Movimiento de Kardex', path: '/movimiento-kardex', icon: <ArrowRightLeft size={20} /> },
-    ]
-  },
-  {
-    title: 'ADMINISTRACIÓN',
-    items: [
-      { name: 'Mantenimientos', path: '/mantenimientos', icon: <Settings size={20} /> },
-      { name: 'Reportes', path: '/reportes', icon: <FileBarChart size={20} /> },
-    ]
-  }
-];
+import { erpModules } from '../config/modules';
+import { useSidebarResize } from './useSidebarResize';
 
 export const MainLayout: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [expanded, setExpanded] = useState<string[]>([]);
+  useEffect(() => {
+    setMobileOpen(false);
+    const module = erpModules.find(item => location.pathname === `/${item.id}` || [...item.links, ...(item.secondaryLinks ?? [])].some(link => link.path && link.path !== '/' && location.pathname === link.path.split('?')[0]));
+    if (module) setExpanded(prev => prev.includes(module.id) ? prev : [...prev, module.id]);
+  }, [location.pathname, location.search]);
+  useEffect(() => {
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === 'Escape') setMobileOpen(false); };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => window.removeEventListener('keydown', closeOnEscape);
+  }, []);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [darkMode, setDarkMode] = useState(false);
+  const sidebar = useSidebarResize();
+  const [darkMode, setDarkMode] = useState(() => {
+    try { return localStorage.getItem('erp_theme') === 'dark'; } catch { return false; }
+  });
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', darkMode);
+    try { localStorage.setItem('erp_theme', darkMode ? 'dark' : 'light'); } catch { /* Theme remains available for this session. */ }
+  }, [darkMode]);
   const [currentUser, setCurrentUser] = useState<any>(null);
 
   useEffect(() => {
@@ -80,7 +52,7 @@ export const MainLayout: React.FC = () => {
 
   const toggleDarkMode = () => {
     setDarkMode(!darkMode);
-    document.documentElement.classList.toggle('dark');
+
   };
 
   return (
@@ -88,22 +60,22 @@ export const MainLayout: React.FC = () => {
       
       {/* Sidebar Overlay (Mobile) */}
       <AnimatePresence>
-        {!sidebarOpen && (
+        {mobileOpen && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             className="md:hidden fixed inset-0 z-20 bg-black/50"
-            onClick={() => setSidebarOpen(true)}
+            onClick={() => setMobileOpen(false)}
           />
         )}
       </AnimatePresence>
 
       {/* Sidebar */}
-      <motion.aside
-        initial={{ width: 260 }}
-        animate={{ width: sidebarOpen ? 260 : 80 }}
-        className={`fixed md:relative z-30 h-full flex flex-col transition-colors duration-300 print:hidden ${
+      <aside
+        style={{ '--sidebar-width': `${sidebarOpen ? sidebar.width : 80}px`, '--sidebar-mobile-width': `${sidebarOpen ? 288 : 80}px` } as React.CSSProperties}
+        id="erp-navigation" aria-label="Navegación principal"
+        className={`fixed md:relative ${mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'} z-30 h-full flex shrink-0 flex-col w-[var(--sidebar-mobile-width)] max-w-[calc(100vw-3rem)] md:w-[var(--sidebar-width)] md:max-w-none ${sidebar.resizing ? 'transition-none' : 'transition-[width,background-color,border-color] duration-200'} print:hidden ${
           darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'
         } border-r shadow-xl md:shadow-none`}
       >
@@ -132,52 +104,30 @@ export const MainLayout: React.FC = () => {
           )}
         </div>
 
-        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-6 custom-scrollbar">
-          {MENU_SECTIONS.map((section, idx) => (
-            <div key={idx}>
-              {sidebarOpen && (
-                <p className={`px-3 mb-2 text-[10px] font-bold tracking-widest uppercase ${darkMode ? 'text-slate-500' : 'text-slate-400'}`}>
-                  {section.title}
-                </p>
-              )}
-              <div className="space-y-1">
-                {section.items.map((item, itemIdx) => (
-                  <NavLink
-                    key={itemIdx}
-                    to={item.path}
-                    className={({ isActive }) =>
-                      `flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 group relative ${
-                        isActive
-                          ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-400 font-semibold'
-                          : `hover:bg-slate-100 dark:hover:bg-slate-800/50 ${darkMode ? 'text-slate-400' : 'text-slate-600'}`
-                      }`
-                    }
-                    title={!sidebarOpen ? item.name : undefined}
-                  >
-                    <div className="shrink-0">{item.icon}</div>
-                    <AnimatePresence>
-                      {sidebarOpen && (
-                        <motion.span 
-                          initial={{ opacity: 0, width: 0 }} 
-                          animate={{ opacity: 1, width: 'auto' }} 
-                          exit={{ opacity: 0, width: 0 }}
-                          className="truncate text-sm"
-                        >
-                          {item.name}
-                        </motion.span>
-                      )}
-                    </AnimatePresence>
-                  </NavLink>
-                ))}
-              </div>
-            </div>
-          ))}
+        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-2 custom-scrollbar" aria-label="Módulos ERP">
+          <NavLink to="/" end onClick={() => setMobileOpen(false)} className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-blue-600 dark:text-blue-300" title="Dashboard"><LayoutDashboard size={20} />{sidebarOpen && 'Dashboard'}</NavLink>
+          {erpModules.map((module, index) => {
+            const active = location.pathname === `/${module.id}` || [...module.links, ...(module.secondaryLinks ?? [])].some(link => link.path && link.path !== '/' && location.pathname === link.path.split('?')[0]);
+            const open = expanded.includes(module.id);
+            return <div key={module.id}>
+              <button type="button" title={module.name} aria-expanded={open} aria-controls={`nav-${module.id}`}
+                onClick={() => { if (!sidebarOpen) setSidebarOpen(true); setExpanded(prev => prev.includes(module.id) ? prev.filter(id => id !== module.id) : [...prev, module.id]); }}
+                className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm ${active ? 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-300' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'}`}>
+                <span className="shrink-0 text-xs font-bold">{String(index + 1).padStart(2, '0')}</span>
+                {sidebarOpen && <><span className="flex-1">{module.name}</span><span aria-hidden="true">{open ? '−' : '+'}</span></>}
+              </button>
+              {open && sidebarOpen && <div id={`nav-${module.id}`} className="ml-5 space-y-1 border-l border-slate-200 pl-3 dark:border-slate-700">
+                {module.links.map(link => link.path ? <NavLink key={link.name} to={link.path} title={link.description} end onClick={() => setMobileOpen(false)} className={({ isActive }) => `block rounded-lg px-3 py-2 text-xs ${isActive ? 'font-semibold text-blue-700 dark:text-blue-300' : 'text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'}`}>{link.name}</NavLink> : <button key={link.name} type="button" disabled title={link.description} className="block w-full cursor-not-allowed rounded-lg px-3 py-2 text-left text-xs text-slate-400 dark:text-slate-500">{link.name}<span className="ml-1 text-[10px]">· Próximamente</span></button>)}
+                <NavLink to={`/${module.id}`} end onClick={() => setMobileOpen(false)} className={({ isActive }) => `block rounded-lg px-3 py-2 text-xs ${isActive ? 'font-semibold text-blue-700 dark:text-blue-300' : 'text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800'}`}>Resumen del módulo</NavLink>
+              </div>}
+            </div>;
+          })}
         </nav>
 
         {/* Sidebar Footer */}
         <div className="p-4 border-t border-inherit">
            <button 
-             onClick={() => setSidebarOpen(!sidebarOpen)}
+             aria-label="Contraer o expandir menú" aria-expanded={sidebarOpen} onClick={() => { sidebar.stopResize(); setSidebarOpen(!sidebarOpen); }}
              className={`w-full flex items-center justify-center p-2.5 rounded-xl transition-colors ${
                darkMode ? 'hover:bg-slate-800 text-slate-400' : 'hover:bg-slate-100 text-slate-500'
              }`}
@@ -185,7 +135,15 @@ export const MainLayout: React.FC = () => {
              <Menu size={20} />
            </button>
         </div>
-      </motion.aside>
+        {sidebarOpen && <div
+          role="separator" aria-orientation="vertical" aria-label="Ancho del menú lateral"
+          aria-controls="erp-navigation" aria-valuemin={sidebar.minWidth} aria-valuemax={sidebar.maxWidth}
+          aria-valuenow={sidebar.width} aria-valuetext={`${sidebar.width} píxeles`}
+          title="Arrastra para ajustar el ancho. Flechas: 10 px; Mayús + flechas: 40 px; Inicio/Fin: límites."
+          tabIndex={0} {...sidebar.separatorEvents}
+          className={`absolute inset-y-0 -right-1 z-40 hidden w-2 touch-none cursor-col-resize md:block focus-visible:outline-2 focus-visible:outline-blue-500 ${sidebar.resizing ? 'bg-blue-500/40 dark:bg-blue-400/40' : 'hover:bg-blue-500/25 dark:hover:bg-blue-400/30'}`}
+        />}
+      </aside>
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col min-w-0 print:block print:h-auto print:overflow-visible">
@@ -195,7 +153,7 @@ export const MainLayout: React.FC = () => {
           darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-800'
         }`}>
           <div className="flex items-center gap-4">
-            <button onClick={() => setSidebarOpen(!sidebarOpen)} className="md:hidden p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800">
+            <button aria-label="Abrir menú" aria-expanded={mobileOpen} aria-controls="erp-navigation" onClick={() => { setSidebarOpen(true); setMobileOpen(!mobileOpen); }} className="md:hidden p-2 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800">
               <Menu size={20} />
             </button>
             <div className="hidden sm:block">
@@ -204,12 +162,12 @@ export const MainLayout: React.FC = () => {
           </div>
           
           <div className="flex items-center gap-3">
-            <button onClick={toggleDarkMode} className={`p-2 rounded-full transition-colors ${darkMode ? 'hover:bg-slate-800 bg-slate-800' : 'hover:bg-slate-100 bg-slate-50'}`}>
+            <button aria-label="Cambiar modo oscuro" aria-pressed={darkMode} onClick={toggleDarkMode} className={`p-2 rounded-full transition-colors ${darkMode ? 'hover:bg-slate-800 bg-slate-800' : 'hover:bg-slate-100 bg-slate-50'}`}>
               {darkMode ? <Sun size={18} className="text-yellow-400" /> : <Moon size={18} className="text-slate-600" />}
             </button>
-            <button className={`p-2 rounded-full relative transition-colors ${darkMode ? 'hover:bg-slate-800 bg-slate-800' : 'hover:bg-slate-100 bg-slate-50'}`}>
+            <button aria-label="Ver disponibilidad de notificaciones" onClick={() => navigate('/notificaciones')} className={`p-2 rounded-full relative transition-colors ${darkMode ? 'hover:bg-slate-800 bg-slate-800' : 'hover:bg-slate-100 bg-slate-50'}`}>
               <Bell size={18} />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-rose-500 rounded-full border-2 border-white dark:border-slate-900"></span>
+
             </button>
             
             {currentUser ? (

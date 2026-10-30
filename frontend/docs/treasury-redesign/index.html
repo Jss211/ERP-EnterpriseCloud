@@ -1,0 +1,12 @@
+<!doctype html>
+<html lang="es"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Tesorería · Comparación visual</title>
+<style>body{font:15px system-ui;background:#f1f5f9;color:#0f172a;margin:24px}header{display:flex;flex-wrap:wrap;align-items:center;gap:16px}select{padding:8px;border:1px solid #cbd5e1;border-radius:8px}section{margin-top:30px}.pair{display:grid;grid-template-columns:1fr 1fr;gap:20px}figure{margin:0;min-width:0}img{width:100%;border:1px solid #cbd5e1;border-radius:10px}figcaption{margin-bottom:8px;font-weight:600}a{color:#2563eb}@media(max-width:700px){.pair{grid-template-columns:1fr}}</style>
+<header><h1>Tesorería · Comparación visual</h1><label>Tema <select id="theme"><option value="light">Claro</option><option value="dark">Oscuro</option></select></label><label>Dispositivo <select id="device"><option value="desktop">Escritorio</option><option value="mobile">Móvil</option></select></label></header>
+<p>Datos simulados en un perfil local aislado. Pulsa una captura para verla a tamaño completo.</p>
+<main></main>
+<p><a href="cuentas-movimientos.png">Ver página independiente de movimientos</a> · <a href="README.md">Notas de verificación</a></p>
+<script>
+const screens=[['obligaciones','Cuentas por pagar · Bandeja con detalle'],['pagos','Pagos · Historial de actividad'],['cuentas','Caja/Bancos · Cartera de cuentas']];
+function render(){document.querySelector('main').replaceChildren();for(const [name,title] of screens){const section=document.createElement('section');const heading=document.createElement('h2');heading.textContent=title;section.append(heading);const pair=document.createElement('div');pair.className='pair';for(const [state,label] of [['empty','Sin registros'],['data','Con datos']]){const figure=document.createElement('figure');const caption=document.createElement('figcaption');caption.textContent=label;const link=document.createElement('a');link.href=`${name}-${state}-${document.querySelector('#device').value}-${document.querySelector('#theme').value}.png`;const img=document.createElement('img');img.src=link.href;img.alt=title+' · '+label;img.loading='lazy';link.append(img);figure.append(caption,link);pair.append(figure)}section.append(pair);document.querySelector('main').append(section)}}
+document.querySelectorAll('select').forEach(el=>el.addEventListener('change',render));render();
+</script></html>

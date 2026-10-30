@@ -2,6 +2,7 @@
 import { supabase } from '@/lib/supabase';
 
 export interface OrdenCompraItem {
+  descuento_porcentaje?: number;
   id?: string;
   producto_id?: string;
   producto_codigo: string;
@@ -13,6 +14,8 @@ export interface OrdenCompraItem {
 }
 
 export interface OrdenCompra {
+  descuento_global?: number;
+  localBackupWarning?: string;
   id: string;
   codigo: string;
   proveedor_id?: string;
@@ -26,6 +29,22 @@ export interface OrdenCompra {
   observaciones?: string;
   fecha_emision: string;
   items?: OrdenCompraItem[];
+}
+
+function normalizeLocalOrder(order: any): OrdenCompra {
+  return { ...order, id: order.uuid || order.id, codigo: order.codigo || order.id,
+    proveedor_nombre: order.proveedor_nombre || order.proveedor || '', proveedor_documento: order.proveedor_documento || order.ruc || '',
+    moneda: order.moneda || 'PEN', estado: String(order.estado).toUpperCase() === 'ANULADA' ? 'ANULADA' : 'EMITIDA',
+    fecha_emision: order.fecha_emision || order.fecha,
+    items: (order.items || []).map((item: any) => ({ ...item, producto_codigo: item.producto_codigo ?? item.codigo ?? '', producto_descripcion: item.producto_descripcion ?? item.descripcion ?? '', unidad: item.unidad ?? '', cantidad: Number(item.cantidad), costo_unitario: Number(item.costo_unitario ?? item.precioUnitario), subtotal: Number(item.subtotal ?? item.importe) })) };
+}
+
+export function readCachedPurchaseOrders(): OrdenCompra[] {
+  const raw = localStorage.getItem('erp_ordenes_compra');
+  if (raw === null) return [];
+  const records = JSON.parse(raw);
+  if (!Array.isArray(records)) throw new Error('El respaldo local de órdenes no es válido. Los datos se conservan.');
+  return records.map(normalizeLocalOrder);
 }
 
 export const comprasService = {
@@ -88,7 +107,7 @@ export const comprasService = {
 
       if (!data || data.length === 0) {
         const cached = localStorage.getItem('erp_ordenes_compra');
-        return cached ? JSON.parse(cached) : [];
+        return cached ? JSON.parse(cached).map(normalizeLocalOrder) : [];
       }
 
       return data.map((oc: any) => ({
@@ -101,11 +120,13 @@ export const comprasService = {
         igv: Number(oc.igv) || 0,
         total: Number(oc.total) || 0,
         moneda: oc.moneda || 'PEN',
+        descuento_global: oc.descuento_global,
         estado: oc.estado || 'EMITIDA',
         observaciones: oc.observaciones || oc.notas || '',
         fecha_emision: oc.fecha_emision || oc.fecha || oc.created_at || new Date().toISOString(),
         items: (oc.items || []).map((it: any) => ({
           id: it.id,
+          descuento_porcentaje: it.descuento_porcentaje,
           producto_id: it.producto_id,
           producto_codigo: it.producto_codigo || it.codigo || '',
           producto_descripcion: it.producto_descripcion || it.descripcion || '',
@@ -118,12 +139,13 @@ export const comprasService = {
     } catch (err) {
       console.warn('Fallback a respaldo local para órdenes de compra:', err);
       const cached = localStorage.getItem('erp_ordenes_compra');
-      return cached ? JSON.parse(cached) : [];
+      return cached ? JSON.parse(cached).map(normalizeLocalOrder) : [];
     }
   },
 
   // Crear orden de compra en Supabase y sincronizar con localStorage
   createOrdenCompra: async (orden: {
+    descuento_global?: number;
     codigo: string;
     proveedor_id?: string;
     proveedor_nombre: string;
@@ -190,16 +212,21 @@ export const comprasService = {
         total: Number(nuevaOC.total),
         moneda: nuevaOC.moneda,
         estado: nuevaOC.estado,
+        descuento_global: orden.descuento_global,
         fecha_emision: nuevaOC.fecha_emision,
         items: orden.items
       };
 
       // Guardar también en localStorage para compatibilidad inmediata
+      try {
       const cached = localStorage.getItem('erp_ordenes_compra');
       const ocs = cached ? JSON.parse(cached) : [];
       const localOC = {
         id: resOC.codigo,
         uuid: resOC.id,
+        proveedor_id: resOC.proveedor_id,
+        moneda: resOC.moneda,
+        descuento_global: orden.descuento_global,
         proveedor: resOC.proveedor_nombre,
         ruc: resOC.proveedor_documento || '',
         fecha: new Date().toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' }),
@@ -207,6 +234,7 @@ export const comprasService = {
         subtotal: resOC.subtotal,
         igv: resOC.igv,
         items: (orden.items || []).map(it => ({
+          producto_id: it.producto_id,
           codigo: it.producto_codigo,
           descripcion: it.producto_descripcion,
           unidad: it.unidad,
@@ -217,6 +245,7 @@ export const comprasService = {
         estado: 'Emitida'
       };
       localStorage.setItem('erp_ordenes_compra', JSON.stringify([localOC, ...ocs]));
+      } catch { resOC.localBackupWarning = 'La orden está guardada, pero no se pudo guardar su respaldo local.'; }
 
       return resOC;
     } catch (err: any) {
@@ -225,6 +254,8 @@ export const comprasService = {
       const localOC = {
         id: orden.codigo,
         codigo: orden.codigo,
+        proveedor_id: orden.proveedor_id,
+        descuento_global: orden.descuento_global,
         proveedor_nombre: orden.proveedor_nombre,
         proveedor_documento: orden.proveedor_documento,
         subtotal: orden.subtotal,
@@ -240,6 +271,8 @@ export const comprasService = {
       const ocs = cached ? JSON.parse(cached) : [];
       localStorage.setItem('erp_ordenes_compra', JSON.stringify([{
         id: orden.codigo,
+        proveedor_id: orden.proveedor_id,
+        descuento_global: orden.descuento_global,
         proveedor: orden.proveedor_nombre,
         ruc: orden.proveedor_documento || '',
         fecha: new Date().toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' }),
@@ -247,6 +280,7 @@ export const comprasService = {
         subtotal: orden.subtotal,
         igv: orden.igv,
         items: (orden.items || []).map(it => ({
+          producto_id: it.producto_id,
           codigo: it.producto_codigo,
           descripcion: it.producto_descripcion,
           unidad: it.unidad,

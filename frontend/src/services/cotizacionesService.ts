@@ -2,6 +2,8 @@
 import { supabase } from '@/lib/supabase';
 
 export interface CotizacionItem {
+  /** Frontend selection; existing document schema persists the historical description. */
+  producto_id?: string;
   id: string;
   descripcion: string;
   cantidad: number;

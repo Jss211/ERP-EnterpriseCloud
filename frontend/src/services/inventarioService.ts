@@ -53,7 +53,7 @@ export interface CatalogoItem {
 
 export const inventarioService = {
   // Obtener catálogos base (líneas, marcas, almacenes, unidades)
-  getCatalogosBase: async () => {
+  getCatalogosBase: async (strict = false) => {
     try {
       const [lineasRes, marcasRes, almacenesRes, unidadesRes] = await Promise.all([
         supabase.from('lineas_categorias').select('id, codigo, nombre, descripcion').order('nombre', { ascending: true }),
@@ -62,6 +62,7 @@ export const inventarioService = {
         supabase.from('unidades_medida').select('id, codigo, nombre, simbolo').order('nombre', { ascending: true })
       ]);
 
+      if (strict && [lineasRes, marcasRes, almacenesRes, unidadesRes].some(result => result.error)) throw new Error('No se pudieron cargar los catálogos. Reintenta.');
       return {
         lineas: (lineasRes.data || []).map((l: any) => ({
           id: l.id,
@@ -89,6 +90,7 @@ export const inventarioService = {
       };
     } catch (err) {
       console.error('Error al obtener catálogos base:', err);
+      if (strict) throw new Error('No se pudieron cargar los catálogos. Reintenta.');
       return { lineas: [], marcas: [], almacenes: [], unidades: [] };
     }
   },

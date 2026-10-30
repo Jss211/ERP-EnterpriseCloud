@@ -1,3 +1,5 @@
+import { MasterSelect } from '../../components/masters/MasterSelect';
+import { inventarioService, type Producto } from '../../services/inventarioService';
 import React, { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { Plus, Search, Edit2, Trash2, X, Save, FileText, XCircle, PlusCircle, Calculator } from 'lucide-react';
@@ -9,6 +11,7 @@ import type { Cliente } from '../../services/clientesService';
 export const CotizacionesPage: React.FC = () => {
   const { darkMode } = useOutletContext<{ darkMode: boolean }>();
   const [cotizaciones, setCotizaciones] = useState<Cotizacion[]>([]);
+  const [productos, setProductos] = useState<Producto[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   
@@ -34,6 +37,7 @@ export const CotizacionesPage: React.FC = () => {
   }, []);
 
   const cargarDatos = async () => {
+    setProductos(await inventarioService.getProductos());
     const dataCotizaciones = await cotizacionesService.getCotizaciones();
     const dataClientes = await clientesService.getClientes();
     setCotizaciones(dataCotizaciones);
@@ -329,16 +333,7 @@ export const CotizacionesPage: React.FC = () => {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
                 <div className="md:col-span-2">
                   <label className={`block text-sm font-semibold mb-1 ${darkMode ? 'text-slate-300' : 'text-gray-700'}`}>Cliente *</label>
-                  <select required name="cliente_id" value={formData.cliente_id} onChange={handleInputChange}
-                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-1 focus:ring-[#ff5a1f] ${
-                      darkMode ? 'bg-slate-800 border-slate-700 text-white focus:border-[#ff5a1f]' : 'bg-white border-gray-300 text-gray-900 focus:border-[#ff5a1f]'
-                    }`}
-                  >
-                    <option value="" className={darkMode ? 'bg-slate-800 text-slate-400' : ''}>Seleccione un cliente...</option>
-                    {clientes.map(c => (
-                      <option key={c.id} value={c.id} className={darkMode ? 'bg-slate-800 text-white' : ''}>{c.documento} - {c.nombre}</option>
-                    ))}
-                  </select>
+                  <MasterSelect required name="cliente_id" aria-label="Cliente de la cotización" value={formData.cliente_id} onChange={handleInputChange} options={clientes.map(cliente => ({ id: cliente.id, label: `${cliente.documento} · ${cliente.nombre}` }))} />
                 </div>
                 
                 <div>
@@ -418,14 +413,14 @@ export const CotizacionesPage: React.FC = () => {
                       {formData.items.map((item) => (
                         <tr key={item.id}>
                           <td className="px-4 py-2">
-                            <input type="text" required placeholder="Nombre del producto o servicio"
-                              value={item.descripcion} onChange={(e) => updateItem(item.id, 'descripcion', e.target.value)}
-                              className={`w-full px-2 py-1.5 border rounded focus:outline-none transition-colors text-sm ${
-                                darkMode 
-                                  ? 'bg-slate-800 border-slate-700 text-white placeholder-slate-500 focus:border-[#ff5a1f]' 
-                                  : 'border-transparent hover:border-gray-300 focus:border-[#ff5a1f]'
-                              }`}
-                            />
+                            <MasterSelect aria-label="Producto de la cotización" required={!item.descripcion} value={item.producto_id ?? ''}
+                              placeholder={item.descripcion ? `Documento existente: ${item.descripcion}` : 'Seleccionar producto maestro'}
+                              options={productos.map(product => ({ id: product.id, label: `${product.codigo} · ${product.descripcion}` }))}
+                              onChange={event => {
+                                const product = productos.find(product => product.id === event.target.value);
+                                if (product) setFormData(prev => ({ ...prev, items: prev.items.map(line => line.id === item.id ? { ...line, producto_id: product.id, descripcion: product.descripcion, precio_unitario: product.precioVenta, subtotal: line.cantidad * product.precioVenta } : line) }));
+                              }} />
+                            {item.descripcion && <p className="mt-1 text-xs text-slate-500">{item.descripcion}</p>}
                           </td>
                           <td className="px-4 py-2">
                             <input type="number" required min="0.01" step="0.01"

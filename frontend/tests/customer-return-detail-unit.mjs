@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import ts from 'typescript';
+const root=resolve(import.meta.dirname,'..');
+const dir=resolve(root,'node_modules/.tmp/return-detail-unit');
+await mkdir(dir,{recursive:true});
+const modules=['domain','ReturnUI','ReturnLines','ReturnDetailModal'];
+for(const name of modules) {
+  const source=await readFile(resolve(root,`src/modules/ventas/devoluciones/${name}.${name==='domain'?'ts':'tsx'}`),'utf8');
+  let output=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022,jsx:ts.JsxEmit.ReactJSX}}).outputText;
+  for(const dependency of modules)output=output.replaceAll(`'./${dependency}'`,`'./${dependency}.mjs'`);
+  await writeFile(resolve(dir,name+'.mjs'),output);
+}
+const {ReturnDetailContent}=await import(pathToFileURL(resolve(dir,'ReturnDetailModal.mjs')));
+const render=request=>renderToStaticMarkup(createElement(ReturnDetailContent,{request}));
+const sparse=render({id:'saved-id',source:{},lines:[{description:'Producto histórico',quantity:2}]});
+assert.ok(sparse.includes('saved-id')&&sparse.includes('Producto histórico'));
+assert.ok(sparse.includes('No disponible'));
+assert.ok(!sparse.includes('NaN')&&!sparse.includes('undefined'));
+assert.ok(!sparse.includes('0.00')&&!sparse.includes('PEN'));
+const record={id:'request-one',status:'SOLICITADA',date:'2026-10-26',source:{number:'VEN-1',customerName:'Cliente',customerDocument:'',currency:'USD'},lines:[{description:'Producto',quantity:2,soldQuantity:10,unitPrice:4,originalSubtotal:40,reason:'Daño',notes:''}],reason:'Revisión',notes:''};
+const full=render(record);
+assert.ok(full.includes('USD 4.00')&&full.includes('USD 40.00'));
+assert.ok(!full.includes('USD 8.00'),'do not calculate a new requested amount');
+assert.ok(full.includes('Solicitud registrada')&&full.includes('No disponible'));
+assert.ok(render({...record,lines:[]}).includes('No disponible'));
+assert.ok(render({}).includes('No disponible'));
+assert.ok(render({...record,lines:[{description:'<script>test</script>',quantity:1}]}).includes('&lt;script&gt;'));
+console.log('PASS return detail: saved fields, missing data fallback, stored reference amounts only, no derived totals or invented currency, empty lines and escaped text.');

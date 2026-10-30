@@ -1,11 +1,18 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { Download, Printer, Search, FileBarChart, Coins, CheckCircle2, X } from 'lucide-react';
-import { ventasService } from '../../services/ventasService';
-import { supabase } from '@/lib/supabase';
+import { Download, Printer, Search, FileBarChart, Coins, CheckCircle2 } from 'lucide-react';
+import { treasuryService } from '../tesoreria/runtime';
+import { toStatementItem } from '../tesoreria/receivableCompatibility';
+import type { Currency, MoneyAccount, Obligation } from '../tesoreria/types';
+import { OperationForm } from '../tesoreria/OperationForm';
+import { FinancialDetail } from '../tesoreria/FinancialDetail';
+import { addMinor, documentMinor } from '../tesoreria/money';
+import { Loading, TreasuryError } from '../tesoreria/TreasuryUI';
+import { button, control } from '../tesoreria/styles';
 
 export interface ItemEstadoCuenta {
+  moneda?: Currency; vencimiento?: string; vencido?: boolean; bloqueo?: string; documentoAnulado?: boolean; obligation?: Obligation;
   id?: string;
   dbId?: string;
   tipo: string;
@@ -31,168 +38,30 @@ export const EstadoCuentaPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [consultFeedback, setConsultFeedback] = useState<string | null>(null);
 
-  // Estados para el Modal de Cobro
   const [cobroModalItem, setCobroModalItem] = useState<ItemEstadoCuenta | null>(null);
-  const [cobroAmount, setCobroAmount] = useState<number>(0);
-  const [paymentMethod, setPaymentMethod] = useState<string>('Efectivo');
-  const [nroOperacion, setNroOperacion] = useState<string>('');
-  const [isProcessingCobro, setIsProcessingCobro] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-
-  // Cargar comprobantes reales desde Supabase y localStorage
-  useEffect(() => {
-    const loadRealVentas = async () => {
-      setLoading(true);
+  const [accounts,setAccounts]=useState<MoneyAccount[]>([]);
+  const [documents,setDocuments]=useState<Obligation[]>([]);
+  const [detail,setDetail]=useState<Obligation|null>(null);
+  const [operationId,setOperationId]=useState('');
+  const [revision,setRevision]=useState(0);
+  const [loadError,setLoadError]=useState('');
+  const [reportDate]=useState(()=>new Date().toLocaleDateString());
+  const [statusFilter,setStatusFilter]=useState('');
+  const [toastMessage,setToastMessage]=useState<string|null>(null);
+  useEffect(()=>{
+    let active=true;
+    const load=async()=>{
       try {
-        const ventas = await ventasService.getVentas();
-        const cachedCuenta = localStorage.getItem('erp_estado_cuenta');
-        const cuentaDB: ItemEstadoCuenta[] = cachedCuenta ? JSON.parse(cachedCuenta) : [];
-
-        const mapped: ItemEstadoCuenta[] = ventas.map(v => {
-          const isFactura = v.cliente_nombre.toUpperCase().includes('S.A.') || 
-                            v.cliente_nombre.toUpperCase().includes('E.I.R.L.') || 
-                            v.cliente_nombre.toUpperCase().includes('S.R.L.');
-          const formattedDate = new Date(v.fecha).toLocaleDateString('es-PE', { 
-            day: '2-digit', month: '2-digit', year: 'numeric' 
-          }) + ' ' + new Date(v.fecha).toLocaleTimeString('es-PE', { 
-            hour: '2-digit', minute: '2-digit' 
-          });
-
-          const productosStr = v.items && v.items.length > 0 
-            ? v.items.map(i => `${i.cantidad}x ${i.descripcion}`).join(', ') 
-            : 'Productos varios';
-
-          return {
-            id: v.id,
-            dbId: v.id,
-            tipo: isFactura ? 'FACTURA ELECTRÓNICA' : 'BOLETA DE VENTA ELECTRÓNICA',
-            fecha: formattedDate,
-            rawFecha: v.fecha,
-            nro: v.numero,
-            razonSocial: v.cliente_nombre,
-            productos: productosStr,
-            metodoPago: v.metodo_pago || 'Efectivo',
-            estado: v.estado === 'Completada' ? 'CANCELADO' : 'PENDIENTE',
-            total: v.total,
-            saldo: v.estado === 'Completada' ? 0 : v.total,
-            pagado: v.estado === 'Completada' ? v.total : 0
-          };
-        });
-
-        // Combinar comprobantes de Supabase y locales evitando duplicaciones
-        const map = new Map<string, ItemEstadoCuenta>();
-        cuentaDB.forEach(item => {
-          map.set(item.nro, item);
-        });
-
-        mapped.forEach(item => {
-          if (map.has(item.nro)) return;
-
-          // Si es una orden y ya existe una factura para este cliente y total, no duplicar
-          const hasIssuedInvoice = Array.from(map.values()).some(existing => 
-            existing.razonSocial.trim().toLowerCase() === item.razonSocial.trim().toLowerCase() &&
-            Math.abs(existing.total - item.total) < 0.01
-          );
-
-          if (!hasIssuedInvoice) {
-            map.set(item.nro, item);
-          }
-        });
-
-        setAllData(Array.from(map.values()));
-      } catch (err) {
-        console.error('Error al cargar estado de cuenta:', err);
-      } finally {
-        setLoading(false);
-      }
+        const view=await treasuryService.workspace({page:1,pageSize:100},'COBRAR');
+        const rows=view.documents,state=view.state;
+        if(active){setDocuments(rows);setAccounts(state.accounts);setAllData(rows.map(o=>toStatementItem(o,[...state.operations].reverse().find(op=>op.obligationId===o.id&&!op.cancellation)?.method)));setLoadError('');}
+      }catch(e){if(active)setLoadError(e instanceof Error?e.message:'No se pudo leer el estado de cuenta.');}
+      finally{if(active)setLoading(false);}
     };
-
-    loadRealVentas();
-  }, []);
-
-  const handleOpenCobroModal = (item: ItemEstadoCuenta) => {
-    setCobroModalItem(item);
-    setCobroAmount(item.saldo);
-    setPaymentMethod(item.metodoPago || 'Efectivo');
-    setNroOperacion('');
-  };
-
-  const handleConfirmCobro = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!cobroModalItem || cobroAmount <= 0) return;
-
-    setIsProcessingCobro(true);
-
-    try {
-      const nuevoSaldo = Math.max(0, Number((cobroModalItem.saldo - cobroAmount).toFixed(2)));
-      const nuevoPagado = Number((cobroModalItem.pagado + cobroAmount).toFixed(2));
-      const nuevoEstado = nuevoSaldo === 0 ? 'CANCELADO' : 'PENDIENTE';
-
-      // 1. Actualizar estado local
-      const updatedAllData = allData.map(d => {
-        if (d.nro === cobroModalItem.nro) {
-          return {
-            ...d,
-            metodoPago: paymentMethod,
-            saldo: nuevoSaldo,
-            pagado: nuevoPagado,
-            estado: nuevoEstado
-          };
-        }
-        return d;
-      });
-      setAllData(updatedAllData);
-
-      // 2. Actualizar localStorage
-      const cachedCuenta = localStorage.getItem('erp_estado_cuenta');
-      const cuentaDB: ItemEstadoCuenta[] = cachedCuenta ? JSON.parse(cachedCuenta) : [];
-      let foundInCached = false;
-      const updatedCuentaDB = cuentaDB.map(d => {
-        if (d.nro === cobroModalItem.nro) {
-          foundInCached = true;
-          return {
-            ...d,
-            metodoPago: paymentMethod,
-            saldo: nuevoSaldo,
-            pagado: nuevoPagado,
-            estado: nuevoEstado
-          };
-        }
-        return d;
-      });
-      if (!foundInCached) {
-        updatedCuentaDB.push({
-          ...cobroModalItem,
-          metodoPago: paymentMethod,
-          saldo: nuevoSaldo,
-          pagado: nuevoPagado,
-          estado: nuevoEstado
-        });
-      }
-      localStorage.setItem('erp_estado_cuenta', JSON.stringify(updatedCuentaDB));
-
-      // 3. Sincronizar con Supabase si aplica
-      if (nuevoEstado === 'CANCELADO') {
-        try {
-          if (cobroModalItem.dbId) {
-            await supabase.from('ventas').update({ estado: 'Completada', metodo_pago: paymentMethod }).eq('id', cobroModalItem.dbId);
-          } else {
-            await supabase.from('ventas').update({ estado: 'Completada', metodo_pago: paymentMethod }).eq('numero', cobroModalItem.nro);
-          }
-        } catch (dbErr) {
-          console.warn('No se pudo actualizar en Supabase ventas:', dbErr);
-        }
-      }
-
-      setToastMessage(`¡Cobro de S/ ${cobroAmount.toFixed(2)} registrado con éxito! El documento ${cobroModalItem.nro} ahora está ${nuevoEstado}.`);
-      setTimeout(() => setToastMessage(null), 5000);
-      setCobroModalItem(null);
-    } catch (err) {
-      console.error('Error al registrar cobro:', err);
-    } finally {
-      setIsProcessingCobro(false);
-    }
-  };
+    void load();return()=>{active=false;};
+  },[revision]);
+  const reload=()=>{setLoading(true);setRevision(n=>n+1);};
+  const handleOpenCobroModal=(item:ItemEstadoCuenta)=>{if(item.bloqueo||item.documentoAnulado){setToastMessage(item.bloqueo||'Documento anulado.');return;}setCobroModalItem(item);};
 
   // Filtramos la data en tiempo real
   const filteredData = useMemo(() => {
@@ -203,7 +72,8 @@ export const EstadoCuentaPage: React.FC = () => {
         d.metodoPago.toLowerCase().includes(filterText.toLowerCase().trim()) ||
         d.productos.toLowerCase().includes(filterText.toLowerCase().trim());
 
-      if (!matchText) return false;
+      if (!matchText || (statusFilter && d.estado !== statusFilter)) return false;
+      if (dateStart && dateEnd && dateStart > dateEnd) return false;
 
       if (dateStart && d.rawFecha) {
         const itemDate = d.rawFecha.slice(0, 10);
@@ -216,14 +86,15 @@ export const EstadoCuentaPage: React.FC = () => {
 
       return true;
     });
-  }, [allData, filterText, dateStart, dateEnd]);
+  }, [allData, filterText, dateStart, dateEnd,statusFilter]);
 
   // Agrupamos por tipo de documento
   const groupedData = useMemo(() => {
     const groups: Record<string, ItemEstadoCuenta[]> = {};
     filteredData.forEach(item => {
-      if (!groups[item.tipo]) groups[item.tipo] = [];
-      groups[item.tipo].push(item);
+      const group = `${item.tipo} ? ${item.moneda}`;
+      if (!groups[group]) groups[group] = [];
+      groups[group].push(item);
     });
     return groups;
   }, [filteredData]);
@@ -231,12 +102,13 @@ export const EstadoCuentaPage: React.FC = () => {
   const formatCurrency = (val: number) => val.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const exportToCSV = () => {
-    const headers = ['Tipo', 'Fecha Venta', 'Nro Documento', 'Razón Social', 'Detalle de Productos', 'Forma de Pago', 'Estado', 'Total S/.', 'Saldo S/.', 'Pagado S/.'];
+    const headers = ['Tipo', 'Moneda', 'Fecha Venta', 'Nro Documento', 'Razón Social', 'Detalle de Productos', 'Forma de Pago', 'Estado', 'Total', 'Saldo', 'Cobrado'];
     let csvContent = headers.join(';') + '\n';
     
     filteredData.forEach(item => {
       const row = [
         item.tipo,
+        item.moneda,
         item.fecha,
         item.nro,
         `"${item.razonSocial}"`,
@@ -260,6 +132,7 @@ export const EstadoCuentaPage: React.FC = () => {
     document.body.removeChild(link);
   };
 
+  if ((loading || loadError) && !cobroModalItem && !detail && !operationId) return <section className="text-slate-800 dark:text-slate-100"><h1 className="text-2xl font-bold">Estado de cuenta de ventas</h1>{loading?<Loading/>:<TreasuryError error={loadError} retry={reload}/>}</section>;
   return (
     <motion.div 
       initial={{ opacity: 0, y: 10 }}
@@ -275,6 +148,7 @@ export const EstadoCuentaPage: React.FC = () => {
         `}
       </style>
       
+      <p className="mb-3 text-xs text-slate-500 dark:text-slate-400 print:hidden">Tesorer?a local ? Operaciones nuevas guardadas solo en este navegador. Los cobros hist?ricos sin cuenta no generan movimientos retroactivos.</p>
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4 mb-6 mt-2 print:hidden">
         <div>
@@ -317,7 +191,7 @@ export const EstadoCuentaPage: React.FC = () => {
 
       <div className="hidden print:block mb-6">
         <h2 className="text-2xl font-bold mb-1">Estado de cuenta de ventas</h2>
-        <p className="text-sm text-gray-600">Reporte generado el {new Date().toLocaleDateString()}</p>
+        <p className="text-sm text-gray-600">Reporte generado el {reportDate}</p>
       </div>
 
       <div className="flex flex-col lg:flex-row gap-6 items-start">
@@ -355,9 +229,9 @@ export const EstadoCuentaPage: React.FC = () => {
                   <th className="px-3 py-2">Detalle de Productos</th>
                   <th className="px-3 py-2">Forma de Pago</th>
                   <th className="px-3 py-2 text-center">Estado</th>
-                  <th className="px-3 py-2 text-right">Total S/.</th>
-                  <th className="px-3 py-2 text-right">Saldo S/.</th>
-                  <th className="px-3 py-2 text-right">Pagado S/.</th>
+                  <th className="px-3 py-2 text-right">Total</th>
+                  <th className="px-3 py-2 text-right">Saldo</th>
+                  <th className="px-3 py-2 text-right">Cobrado</th>
                   <th className="px-3 py-2 text-center last:rounded-r-lg print:hidden">Acción</th>
                 </tr>
               </thead>
@@ -403,9 +277,9 @@ export const EstadoCuentaPage: React.FC = () => {
                 </tbody>
               ) : (
                 Object.entries(groupedData).map(([tipo, items]) => {
-                  const totalMonto = items.reduce((acc, curr) => acc + curr.total, 0);
-                  const totalSaldo = items.reduce((acc, curr) => acc + curr.saldo, 0);
-                  const totalPagado = items.reduce((acc, curr) => acc + curr.pagado, 0);
+                  const totalMonto = items.filter(item=>!item.documentoAnulado).reduce((acc, curr) => addMinor(acc, documentMinor(curr.total)), 0) / 100;
+                  const totalSaldo = items.filter(item=>!item.documentoAnulado).reduce((acc, curr) => addMinor(acc, documentMinor(curr.saldo)), 0) / 100;
+                  const totalPagado = items.filter(item=>!item.documentoAnulado).reduce((acc, curr) => addMinor(acc, documentMinor(curr.pagado)), 0) / 100;
                   
                   return (
                     <tbody key={tipo} className="print:divide-y print:divide-gray-400">
@@ -431,7 +305,7 @@ export const EstadoCuentaPage: React.FC = () => {
                           <td className={`px-3 py-2.5 rounded-l-xl print:rounded-none font-semibold print:text-black whitespace-nowrap ${
                             darkMode ? 'text-slate-300' : 'text-slate-700'
                           }`}>
-                            {item.fecha}
+                            {item.fecha}<small className="mt-1 block text-slate-500">Vence: {item.vencimiento || 'No disponible'}</small>
                           </td>
                           <td className="px-3 py-2.5">
                             <span className={`inline-flex items-center px-2 py-1 rounded-md text-[10px] font-bold whitespace-nowrap ${
@@ -464,34 +338,35 @@ export const EstadoCuentaPage: React.FC = () => {
                           </td>
                           <td className="px-3 py-2.5 text-center">
                             <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-[9px] font-bold tracking-wider uppercase whitespace-nowrap ${
-                              item.estado === 'CANCELADO'
+                              item.estado === 'PAGADA'
                                 ? darkMode ? 'bg-emerald-900/30 text-emerald-400' : 'bg-emerald-50 text-emerald-700'
                                 : darkMode ? 'bg-orange-900/30 text-orange-400' : 'bg-orange-50 text-orange-700'
                             } print:bg-transparent print:text-black`}>
                               <span className={`w-1 h-1 rounded-full print:hidden ${
-                                item.estado === 'CANCELADO' ? 'bg-emerald-500' : 'bg-orange-500'
+                                item.estado === 'PAGADA' ? 'bg-emerald-500' : 'bg-orange-500'
                               }`}></span>
                               {item.estado}
-                            </span>
+                            </span><p className="mt-1 text-[10px] text-slate-500">{item.vencido ? 'Vencido con saldo' : item.vencimiento ? 'Vencimiento: ' + item.vencimiento : 'Sin fecha de vencimiento'}</p>{item.bloqueo && <p className="mt-1 text-[10px] text-amber-700 dark:text-amber-300">{item.bloqueo}</p>}
                           </td>
                           <td className={`px-3 py-2.5 text-right font-semibold whitespace-nowrap ${darkMode ? 'text-white' : 'text-slate-800'} print:text-black`}>
-                            {formatCurrency(item.total)}
+                            {item.moneda} {formatCurrency(item.total)}
                           </td>
                           <td className={`px-3 py-2.5 text-right font-bold whitespace-nowrap ${
                             item.saldo > 0 ? (darkMode ? 'text-orange-400' : 'text-orange-600') : (darkMode ? 'text-slate-500' : 'text-slate-400')
                           } print:text-black`}>
-                            {formatCurrency(item.saldo)}
+                            {item.moneda} {formatCurrency(item.saldo)}
                           </td>
                           <td className={`px-3 py-2.5 text-right font-bold whitespace-nowrap ${
                             item.pagado > 0 ? (darkMode ? 'text-emerald-400' : 'text-emerald-600') : (darkMode ? 'text-slate-500' : 'text-slate-400')
                           } print:text-black`}>
-                            {formatCurrency(item.pagado)}
+                            {item.moneda} {formatCurrency(item.pagado)}
                           </td>
                           <td className="px-3 py-2.5 text-center rounded-r-xl print:rounded-none print:hidden whitespace-nowrap">
+                            <button type="button" className={`${button} mr-2`} onClick={()=>item.obligation&&setDetail(item.obligation)}>Ver detalle</button>
                             {item.saldo > 0 || item.estado === 'PENDIENTE' ? (
                               <button
-                                onClick={() => handleOpenCobroModal(item)}
-                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-all hover:scale-105 active:scale-95"
+                                disabled={!!item.bloqueo||item.documentoAnulado} onClick={() => handleOpenCobroModal(item)}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-all hover:scale-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40"
                                 title="Registrar cobro de este documento"
                               >
                                 <Coins size={13} />
@@ -558,6 +433,9 @@ export const EstadoCuentaPage: React.FC = () => {
                 </div>
               </div>
               
+              <label className="block text-sm">Estado de pago<select className={control} value={statusFilter} onChange={e=>setStatusFilter(e.target.value)}><option value="">Todos</option><option>PENDIENTE</option><option>PARCIAL</option><option>PAGADA</option></select></label>
+              <button className={button} onClick={reload}>Actualizar documentos</button>
+              {dateStart && dateEnd && dateStart > dateEnd && <p role="alert" className="text-sm text-amber-700 dark:text-amber-300">La fecha inicial no puede superar la final.</p>}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className={`block text-[10px] font-bold tracking-wider uppercase mb-1.5 ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>
@@ -621,9 +499,9 @@ export const EstadoCuentaPage: React.FC = () => {
             
             <div className="space-y-6 print:grid print:grid-cols-2 print:gap-8 print:space-y-0">
               {Object.entries(groupedData).map(([tipo, items]) => {
-                const totalMonto = items.reduce((acc, curr) => acc + curr.total, 0);
-                const totalSaldo = items.reduce((acc, curr) => acc + curr.saldo, 0);
-                const totalPagado = items.reduce((acc, curr) => acc + curr.pagado, 0);
+                const totalMonto = items.filter(item=>!item.documentoAnulado).reduce((acc, curr) => addMinor(acc, documentMinor(curr.total)), 0) / 100;
+                const totalSaldo = items.filter(item=>!item.documentoAnulado).reduce((acc, curr) => addMinor(acc, documentMinor(curr.saldo)), 0) / 100;
+                const totalPagado = items.filter(item=>!item.documentoAnulado).reduce((acc, curr) => addMinor(acc, documentMinor(curr.pagado)), 0) / 100;
                 
                 return (
                   <div key={tipo} className={`pb-4 border-b last:border-0 last:pb-0 ${darkMode ? 'border-slate-800' : 'border-gray-100'} print:border-b-0 print:border-l-4 print:border-black print:pl-4 print:pb-0`}>
@@ -642,7 +520,7 @@ export const EstadoCuentaPage: React.FC = () => {
                             <li key={idx} className="flex flex-col gap-0.5">
                               <div className="flex justify-between items-center">
                                 <span className={`text-[11px] font-bold ${darkMode ? 'text-slate-300' : 'text-slate-700'} print:text-black`}>{item.nro}</span>
-                                <span className={`text-[11px] font-bold ${darkMode ? 'text-[#38bdf8]' : 'text-[#0ea5e9]'} print:text-black`}>{formatCurrency(item.total)}</span>
+                                <span className={`text-[11px] font-bold ${darkMode ? 'text-[#38bdf8]' : 'text-[#0ea5e9]'} print:text-black`}>{item.moneda} {formatCurrency(item.total)}</span>
                               </div>
                               <span className={`text-[11px] leading-relaxed ${darkMode ? 'text-slate-400' : 'text-gray-500'} print:text-black`}>
                                 {item.productos}
@@ -687,149 +565,10 @@ export const EstadoCuentaPage: React.FC = () => {
         </div>
       )}
 
-      {/* Modal de Cobro */}
-      {cobroModalItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className={`w-full max-w-md rounded-2xl shadow-2xl border p-6 overflow-hidden ${
-            darkMode ? 'bg-slate-900 border-slate-800 text-white' : 'bg-white border-slate-200 text-slate-800'
-          }`}>
-            <div className="flex items-center justify-between pb-4 border-b dark:border-slate-800">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
-                  <Coins size={20} />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold">Registrar Cobro de Venta</h3>
-                  <p className="text-[11px] text-slate-400">Documento {cobroModalItem.nro}</p>
-                </div>
-              </div>
-              <button 
-                onClick={() => setCobroModalItem(null)}
-                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-              >
-                <X size={18} />
-              </button>
-            </div>
+      {cobroModalItem?.obligation && <OperationForm kind="COBRO" obligations={documents} accounts={accounts} preset={cobroModalItem.obligation} onClose={()=>setCobroModalItem(null)} onDone={operation=>{setCobroModalItem(null);setOperationId(operation.id);reload();}}/>}
+      {detail&&<FinancialDetail obligation={detail} onClose={()=>setDetail(null)} onChange={reload}/>}
+      {operationId&&<FinancialDetail operationId={operationId} onClose={()=>setOperationId('')} onChange={reload}/>}
 
-            <form onSubmit={handleConfirmCobro} className="mt-4 space-y-4">
-              {/* Resumen del documento */}
-              <div className={`p-3.5 rounded-xl border space-y-2 text-xs ${
-                darkMode ? 'bg-slate-800/60 border-slate-700/60' : 'bg-slate-50 border-slate-200/80'
-              }`}>
-                <div className="flex justify-between">
-                  <span className="text-slate-400 font-medium">Cliente:</span>
-                  <span className="font-bold truncate max-w-[220px]">{cobroModalItem.razonSocial}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400 font-medium">Total Documento:</span>
-                  <span className="font-bold">S/ {formatCurrency(cobroModalItem.total)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-slate-400 font-medium">Monto ya Pagado:</span>
-                  <span className="font-bold text-emerald-500">S/ {formatCurrency(cobroModalItem.pagado)}</span>
-                </div>
-                <div className="flex justify-between pt-1 border-t dark:border-slate-700">
-                  <span className="font-bold text-orange-500">Saldo Pendiente:</span>
-                  <span className="font-extrabold text-orange-500 text-sm">S/ {formatCurrency(cobroModalItem.saldo)}</span>
-                </div>
-              </div>
-
-              {/* Monto a Cobrar */}
-              <div>
-                <div className="flex justify-between items-center mb-1.5">
-                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-                    Monto a Cobrar (S/):
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setCobroAmount(cobroModalItem.saldo)}
-                    className="text-[11px] font-bold text-sky-500 hover:underline"
-                  >
-                    Cobrar Saldo Total
-                  </button>
-                </div>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">S/</span>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    max={cobroModalItem.saldo}
-                    value={cobroAmount}
-                    onChange={(e) => setCobroAmount(Number(e.target.value))}
-                    required
-                    className={`w-full pl-9 pr-3 py-2.5 rounded-lg border text-sm font-bold focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
-                      darkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-800'
-                    }`}
-                  />
-                </div>
-              </div>
-
-              {/* Forma de Pago */}
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                  Forma de Pago:
-                </label>
-                <select
-                  value={paymentMethod}
-                  onChange={(e) => setPaymentMethod(e.target.value)}
-                  className={`w-full px-3 py-2.5 rounded-lg border text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
-                    darkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-800'
-                  }`}
-                >
-                  <option value="Efectivo">Efectivo</option>
-                  <option value="Transferencia">Transferencia Bancaria (BCP / BBVA / Interbank)</option>
-                  <option value="Yape / Plin">Yape / Plin</option>
-                  <option value="Tarjeta">Tarjeta Débito / Crédito</option>
-                </select>
-              </div>
-
-              {/* Nro de Operación Opcional */}
-              <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">
-                  Nro de Operación / Referencia (Opcional):
-                </label>
-                <input
-                  type="text"
-                  placeholder="Ej: OPE-839201 o Yape 987654321"
-                  value={nroOperacion}
-                  onChange={(e) => setNroOperacion(e.target.value)}
-                  className={`w-full px-3 py-2 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-emerald-500 ${
-                    darkMode ? 'bg-slate-950 border-slate-700 text-white' : 'bg-white border-slate-300 text-slate-800'
-                  }`}
-                />
-              </div>
-
-              {/* Botones de acción */}
-              <div className="flex gap-2.5 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setCobroModalItem(null)}
-                  className={`flex-1 py-2.5 rounded-xl font-bold text-xs transition-colors border ${
-                    darkMode ? 'bg-slate-800 border-slate-700 text-slate-300 hover:bg-slate-700' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={isProcessingCobro || cobroAmount <= 0}
-                  className="flex-1 py-2.5 rounded-xl font-bold text-xs bg-emerald-600 hover:bg-emerald-700 text-white transition-all shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50"
-                >
-                  {isProcessingCobro ? (
-                    <span>Procesando...</span>
-                  ) : (
-                    <>
-                      <CheckCircle2 size={14} />
-                      Confirmar Cobro
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </motion.div>
   );
 };

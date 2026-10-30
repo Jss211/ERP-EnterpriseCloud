@@ -1,3 +1,4 @@
+import { ProductSearchResults } from '../../components/masters/ProductSearchResults';
 import React, { useState, useEffect, useMemo } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -12,6 +13,7 @@ import { OrderDetailsModal, type OrderDetails } from '../../components/OrderDeta
 
 interface ProductLine {
   id: string;
+  productoId: string;
   codigo: string;
   descripcion: string;
   cantidad: number;
@@ -153,6 +155,7 @@ export const OrdenVentaPage: React.FC = () => {
 
   // Simular la búsqueda de stock cuando el usuario escribe
   const handleProductSearch = (val: string) => {
+    setSelectedProduct(null);
     setSearchQuery(val);
     const found = productDB.find(p => p.descripcion.toLowerCase().includes(val.toLowerCase()) || p.codigo.toLowerCase().includes(val.toLowerCase()));
     if (found && val.length > 2) {
@@ -165,26 +168,28 @@ export const OrdenVentaPage: React.FC = () => {
   const handleAddProduct = () => {
     if (!searchQuery || !inputCant) return;
     
-    const dbProduct = selectedProduct || productDB.find(p => p.descripcion.toLowerCase().includes(searchQuery.toLowerCase()) || p.codigo.toLowerCase().includes(searchQuery.toLowerCase()));
+    const dbProduct = selectedProduct && productDB.find(product => product.id === selectedProduct.id);
+    if (!dbProduct) { showToast('Selecciona un producto existente de la lista de Maestros.'); return; }
     
     const cant = parseFloat(inputCant);
     
     if (isNaN(cant) || cant <= 0) return;
     
     // Calcular cuánto stock ya hemos metido a la orden para no sobrepasar el límite
-    const currentAdded = products.filter(p => p.codigo === (dbProduct?.codigo || 'GEN-001')).reduce((acc, curr) => acc + curr.cantidad, 0);
+    const currentAdded = products.filter(p => p.productoId === dbProduct.id).reduce((acc, curr) => acc + curr.cantidad, 0);
 
     if (dbProduct && (cant + currentAdded) > dbProduct.stock) {
       showToast(`¡Error! Solo te quedan ${dbProduct.stock - currentAdded} unidades disponibles para agregar.`);
       return;
     }
 
-    const precio = dbProduct ? dbProduct.precioVenta : 100;
+    const precio = dbProduct.precioVenta;
 
     const newProduct: ProductLine = {
       id: Math.random().toString(),
-      codigo: dbProduct ? dbProduct.codigo : 'GEN-001',
-      descripcion: dbProduct ? dbProduct.descripcion : searchQuery,
+      productoId: dbProduct.id,
+      codigo: dbProduct.codigo,
+      descripcion: dbProduct.descripcion,
       cantidad: cant,
       precioVenta: precio,
       importe: cant * precio
@@ -223,7 +228,7 @@ export const OrdenVentaPage: React.FC = () => {
 
     // 1. Descontar stock y registrar movimiento en Kardex por cada item
     for (const prod of products) {
-      const match = productDB.find(p => p.codigo === prod.codigo);
+      const match = productDB.find(p => p.id === prod.productoId);
       if (match) {
         try {
           await inventarioService.registrarMovimiento({
@@ -300,6 +305,7 @@ export const OrdenVentaPage: React.FC = () => {
     const ordersDB = cachedOrders ? JSON.parse(cachedOrders) : [];
     
     const orderItems = products.map(p => ({
+      productoId: p.productoId,
       desc: p.descripcion,
       cant: p.cantidad,
       pUnitario: p.precioVenta,
@@ -436,51 +442,7 @@ export const OrdenVentaPage: React.FC = () => {
                     />
 
                     {/* Dropdown de opciones de productos */}
-                    {showProductDropdown && (
-                      <div className={`absolute left-0 right-0 top-full mt-1.5 z-40 rounded-xl shadow-2xl border overflow-hidden max-h-64 overflow-y-auto ${
-                        darkMode ? 'bg-slate-900 border-slate-700' : 'bg-white border-gray-200'
-                      }`}>
-                        {filteredProducts.length === 0 ? (
-                          <div className="p-4 text-center text-xs text-gray-500">
-                            No se encontraron productos coincidentes. Puedes crearlos en <strong className="text-sky-600">Mantenimientos</strong>.
-                          </div>
-                        ) : (
-                          filteredProducts.map((p) => (
-                            <div
-                              key={p.id}
-                              onMouseDown={() => {
-                                setSelectedProduct(p);
-                                setSearchQuery(p.descripcion);
-                                setStockDisp(p.stock);
-                                setShowProductDropdown(false);
-                              }}
-                              className={`p-3 border-b last:border-b-0 cursor-pointer flex items-center justify-between transition-colors ${
-                                darkMode ? 'border-slate-800 hover:bg-slate-800/80' : 'border-gray-100 hover:bg-sky-50/60'
-                              }`}
-                            >
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-sky-100 text-sky-800 dark:bg-sky-900/50 dark:text-sky-300">
-                                    {p.codigo}
-                                  </span>
-                                  <span className={`text-sm font-semibold ${darkMode ? 'text-white' : 'text-slate-800'}`}>
-                                    {p.descripcion}
-                                  </span>
-                                </div>
-                                <p className={`text-xs mt-0.5 ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>
-                                  {p.categoria} • Stock disponible: <span className="font-bold text-sky-600">{p.stock} {p.unidad}</span>
-                                </p>
-                              </div>
-                              <div className="text-right">
-                                <span className={`text-xs font-bold ${darkMode ? 'text-sky-400' : 'text-sky-600'}`}>
-                                  S/ {p.precioVenta.toFixed(2)}
-                                </span>
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    )}
+                    {showProductDropdown && <ProductSearchResults products={filteredProducts} purchase={false} onSelect={p => { setSelectedProduct(p); setSearchQuery(p.descripcion); setStockDisp(p.stock); setShowProductDropdown(false); }} />}
                   </div>
                 </div>
                 <div className="w-full md:w-32">
